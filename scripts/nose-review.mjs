@@ -1,215 +1,133 @@
 #!/usr/bin/env node
-
-import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { extname, join, sep } from "node:path";
-import { pathToFileURL } from "node:url";
-
-const CODE_EXTENSIONS = new Set([
-  ".c", ".css", ".cts", ".go", ".h", ".html", ".java", ".js",
-  ".jsx", ".mjs", ".mts", ".py", ".pyi", ".rb", ".rs", ".svelte",
-  ".swift", ".ts", ".tsx", ".vue",
-]);
+import { readFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { atomicJson, git, hash, register, scan, snapshot, withRegistry } from './review-runtime.mjs';
+import { filterReviewed } from './review-policy.mjs';
 
 export function selectChangedFamilies(families, changedPaths, limit = 3) {
-  return families
-    .filter((family) => family.locations.some((location) => changedPaths.has(normalize(location.file))))
-    .sort((left, right) => {
-      const evidenceOrder = priority(left.witness) - priority(right.witness);
-      return evidenceOrder || numberField(right, "value") - numberField(left, "value");
-    })
-    .slice(0, limit);
+  return families.filter(f=>f.locations.some(l=>changedPaths.has(l.file)))
+    .sort((a,b)=>priority(a.witness)-priority(b.witness) || (b.value??0)-(a.value??0)).slice(0,limit);
 }
-
-export function buildStopOutput(candidates, stopHookActive, repoRoot) {
-  if (stopHookActive || candidates.length === 0) return {};
-  const lines = candidates.map((candidate) => {
-    const locations = candidate.locations
-      .slice(0, 4)
-      .map((location) => `${location.file}:${location.start}`)
-      .join(", ");
-    return `- ${candidate.witness} id=${candidate.id}, ~${candidate.removable} removable lines: ${locations}`;
-  });
-  return {
-    decision: "block",
-    reason: [
-      "Nose found duplication candidates involving files changed in this turn.",
-      "Inspect the source and ownership before finishing; similarity alone is not a refactoring decision.",
-      ...lines,
-      `Open a family with: nose query ${shellQuote(repoRoot)} id=<id> full`,
-    ].join("\n"),
-  };
+function priority(witness) { return ['exact','copy-paste'].includes(witness)?0:1; }
+export function buildStopOutput(candidates, active, root) {
+  if (active || candidates.length===0) return {};
+  return {decision:'block',reason:[
+    'Nose found new or changed duplication relative to the prompt-start scan.',
+    'Review only. Do not edit or refactor code in this follow-up; explain findings and suggest scoped changes. Ownership is not inferred.',
+    ...candidates.map(f=>'- '+f.witness+' id='+f.id+' fingerprint='+f.fingerprint+': '+f.locations.slice(0,4).map(l=>l.file+':'+l.start).join(', ')),
+    'Read source locations directly. Report: '+join(root,'.nose-review/report.json'),
+    'Intentional decisions require an explicit reason via review-policy.mjs accept. Do not accept automatically.',
+  ].join('\n')};
 }
-
-function main() {
-  const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "UserPromptSubmit") {
-    captureBaseline(input);
-    return;
-  }
-  if (input.hook_event_name !== "Stop") return;
-  if (input.stop_hook_active === true) {
-    process.stdout.write("{}\n");
-    return;
-  }
-
-  const repoRoot = findRepoRoot(input.cwd);
-  if (!repoRoot) {
-    process.stdout.write("{}\n");
-    return;
-  }
-  const changedPaths = loadChangedPaths(input.session_id, repoRoot);
-  if (changedPaths.size === 0) {
-    clearBaseline(input.session_id, repoRoot);
-    process.stdout.write("{}\n");
-    return;
-  }
-
-  const result = runNose(repoRoot);
-  clearBaseline(input.session_id, repoRoot);
-  if (result.error) {
-    process.stdout.write(`${JSON.stringify({ systemMessage: result.error })}\n`);
-    return;
-  }
-  const candidates = selectChangedFamilies(result.families, changedPaths);
-  process.stdout.write(`${JSON.stringify(buildStopOutput(candidates, false, repoRoot))}\n`);
+function recordPath(directory, session) { return join(directory,hash(session)+'.json'); }
+function reviewDirectory(root) {
+  const directory=join(root,'.nose-review');
+  mkdirSync(directory,{recursive:true});
+  if (realpathSync(directory)!==join(realpathSync(root),'.nose-review')) throw new Error('Review directory must not redirect outside the repository');
+  return directory;
 }
-
-function captureBaseline(input) {
-  const repoRoot = findRepoRoot(input.cwd);
-  if (!repoRoot) return;
-  const sessionDirectory = stateDirectory(input.session_id);
-  mkdirSync(sessionDirectory, { recursive: true });
-  const baseline = { dirty: dirtyCodeHashes(repoRoot), head: currentHead(repoRoot), repoRoot };
-  writeFileSync(baselinePath(input.session_id, repoRoot), JSON.stringify(baseline));
-}
-
-function findRepoRoot(cwd) {
-  if (typeof cwd !== "string" || cwd.length === 0) return null;
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd,
-    encoding: "utf8",
-  });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
-function loadChangedPaths(sessionId, repoRoot) {
-  let baseline;
-  try {
-    baseline = JSON.parse(readFileSync(baselinePath(sessionId, repoRoot), "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT") return new Set();
-    throw error;
-  }
-  if (baseline.repoRoot !== repoRoot) return new Set();
-
-  const currentDirty = dirtyCodeHashes(repoRoot);
-  const changed = new Set();
-  for (const [path, hash] of Object.entries(currentDirty)) {
-    if (baseline.dirty[path] !== hash) changed.add(path);
-  }
-  const head = currentHead(repoRoot);
-  if (baseline.head && head && baseline.head !== head) {
-    for (const path of gitPaths(repoRoot, ["diff", "--name-only", "-z", baseline.head, head])) {
-      if (isCodePath(path)) changed.add(normalize(path));
+function finish(root, session, operation) {
+  return withRegistry(root,directory=>{
+    const path=recordPath(directory,session);
+    try {
+      if (!existsSync(path)) return {systemMessage:'Nose Review deferred: no successful prompt-start baseline.'};
+      const record=JSON.parse(readFileSync(path,'utf8'));
+      if (record.overlap || existsSync(join(directory,'collision'))) return {systemMessage:'Nose Review deferred: overlapping sessions in this worktree. All overlapping turns are excluded.'};
+      return operation(record);
+    } finally {
+      rmSync(path,{force:true});
+      if (!readdirSync(directory).some(file=>file.endsWith('.json'))) rmSync(join(directory,'collision'),{force:true});
     }
+  });
+}
+function main(input) {
+  if (!['UserPromptSubmit','Stop'].includes(input.hook_event_name)) return {};
+  if (typeof input.session_id!=='string' || !input.session_id) throw new Error('Missing session identity');
+  let root;
+  try { root=git(input.cwd,['rev-parse','--show-toplevel']).trim(); } catch { return {}; }
+  const session=input.session_id;
+  if (input.hook_event_name==='UserPromptSubmit') {
+    const initial=register(root,session);
+    if (initial.overlap) return {systemMessage:'Nose Review: overlapping sessions; automatic review deferred for all overlapping turns.'};
+    try {
+      const result=scan(root);
+      withRegistry(root,directory=>{
+        const path=recordPath(directory,session);
+        const current=JSON.parse(readFileSync(path,'utf8'));
+        atomicJson(path,{...current,ready:true,...result});
+      });
+    } catch(error) { finish(root,session,()=>({})); throw error; }
+    return {};
   }
-  return changed;
-}
-
-function dirtyCodeHashes(repoRoot) {
-  const paths = new Set([
-    ...gitPaths(repoRoot, ["diff", "--name-only", "-z"]),
-    ...gitPaths(repoRoot, ["diff", "--cached", "--name-only", "-z"]),
-    ...gitPaths(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]),
-  ]);
-  return Object.fromEntries([...paths]
-    .map(normalize)
-    .filter(isCodePath)
-    .map((path) => [path, fileDigest(join(repoRoot, path))]));
-}
-
-function gitPaths(repoRoot, args) {
-  const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
-  return result.status === 0 ? result.stdout.split("\0").filter(Boolean) : [];
-}
-
-function currentHead(repoRoot) {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" });
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
-function fileDigest(filePath) {
-  if (!existsSync(filePath)) return null;
-  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
-}
-
-function clearBaseline(sessionId, repoRoot) {
-  rmSync(baselinePath(sessionId, repoRoot), { force: true });
-}
-
-function runNose(repoRoot) {
-  const cacheRoot = process.env.NOSE_REVIEW_CACHE_ROOT
-    ?? join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "nose-review", "analysis");
-  const cacheDirectory = join(cacheRoot, digest(repoRoot));
-  const result = spawnSync("nose", [
-    "query", ".", "all", "top=0", "sort=extractability",
-    "--mode", "syntax,semantic,near", "--min-size", "24",
-    "--cache-dir", cacheDirectory, "--format", "json",
-  ], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (result.error?.code === "ENOENT") {
-    return { error: "Nose Review skipped: the nose executable is not available.", families: [] };
+  if (input.stop_hook_active) {
+    // The first Stop already released the registry entry.
+    return {};
   }
-  if (result.status !== 0) {
-    const detail = result.stderr.trim().split("\n").at(-1) || `exit ${result.status}`;
-    return { error: `Nose Review could not complete: ${detail}`, families: [] };
+  const before=withRegistry(root,directory=>{
+    const path=recordPath(directory,session);
+    return existsSync(path)?JSON.parse(readFileSync(path,'utf8')):null;
+  });
+  if (!before?.ready || before.overlap) return finish(root,session,()=>({}));
+  let current;
+  try {
+    if (JSON.stringify(before.files)===JSON.stringify(snapshot(root))) return finish(root,session,()=>({}));
+    current=scan(root);
+  } catch(error) { finish(root,session,()=>({})); throw error; }
+  return finish(root,session,baseline=>{
+    if (baseline.noseVersion!==current.noseVersion) throw new Error('Nose version changed during turn; review deferred');
+    if (JSON.stringify(current.files)!==JSON.stringify(snapshot(root))) throw new Error('Code changed after scan; review deferred');
+    const old=new Set(baseline.families.map(f=>f.fingerprint));
+    const changed=new Set(Object.keys(current.files).filter(file=>baseline.files[file]!==current.files[file]));
+    const directory=reviewDirectory(root);
+    const policyPath=join(directory,'baseline.json');
+    const policy=existsSync(policyPath)?JSON.parse(readFileSync(policyPath,'utf8')):null;
+    if (policy && (policy.schemaVersion!==1 || policy.noseVersion!==current.noseVersion)) throw new Error('Review baseline schema or Nose version mismatch; update decisions explicitly');
+    const fresh=filterReviewed(current.families.filter(f=>!old.has(f.fingerprint)),policy,current.noseVersion);
+    const candidates=selectChangedFamilies(fresh,changed);
+    mkdirSync(directory,{recursive:true});
+    atomicJson(join(directory,'report.json'),{schemaVersion:1,noseVersion:current.noseVersion,candidates});
+    return buildStopOutput(candidates,false,root);
+  });
+}
+function command(args) {
+  const [action, path, confirmation]=args;
+  const root=git(path??process.cwd(),['rev-parse','--show-toplevel']).trim();
+  if (action==='reset-state' && confirmation==='--confirm-idle') {
+    return withRegistry(root,directory=>{
+      for (const file of readdirSync(directory)) {
+        if (file.endsWith('.json') || file==='collision') rmSync(join(directory,file));
+      }
+      return {status:'reset',repoRoot:root};
+    });
   }
-  const report = JSON.parse(result.stdout);
-  if (!Array.isArray(report.families)) {
-    return { error: "Nose Review received an unsupported report format.", families: [] };
+  if (action==='scan' && args.length===2) {
+    const session='manual-'+process.pid;
+    const initial=register(root,session);
+    try {
+      if (initial.overlap) throw new Error('An active session exists; scan after all turns finish');
+      const result=scan(root);
+      return finish(root,session,()=>{
+        const directory=reviewDirectory(root);
+        mkdirSync(directory,{recursive:true});
+        atomicJson(join(directory,'report.json'),{schemaVersion:1,noseVersion:result.noseVersion,candidates:result.families});
+        return {status:'scanned',families:result.families.length,report:join(directory,'report.json')};
+      });
+    } catch(error) { finish(root,session,()=>({})); throw error; }
   }
-  return { error: null, families: report.families };
+  throw new Error('Usage: nose-review.mjs scan <repo> | reset-state <repo> --confirm-idle');
 }
-
-function stateDirectory(sessionId) {
-  const stateRoot = process.env.NOSE_REVIEW_STATE_ROOT ?? join(tmpdir(), "nose-review-state");
-  return join(stateRoot, digest(typeof sessionId === "string" ? sessionId : "unknown-session"));
+if (process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
+  try {
+    if (process.argv.length>2) {
+      process.stdout.write(JSON.stringify(command(process.argv.slice(2)))+'\n');
+    } else {
+    const input=JSON.parse(readFileSync(0,'utf8'));
+    const output=main(input);
+    if (input.hook_event_name!=='UserPromptSubmit' || Object.keys(output).length) process.stdout.write(JSON.stringify(output)+'\n');
+    }
+  } catch(error) {
+    process.stdout.write(JSON.stringify({systemMessage:'Nose Review unavailable: '+error.message})+'\n');
+    if (process.argv.length>2) process.exitCode=1;
+  }
 }
-
-function baselinePath(sessionId, repoRoot) {
-  return join(stateDirectory(sessionId), `${digest(repoRoot)}.json`);
-}
-
-function isCodePath(filePath) {
-  return CODE_EXTENSIONS.has(extname(filePath).toLowerCase());
-}
-
-function normalize(filePath) {
-  return filePath.split(sep).join("/");
-}
-
-function digest(value) {
-  return createHash("sha256").update(value).digest("hex").slice(0, 20);
-}
-
-function priority(witness) {
-  return witness === "exact" || witness === "copy-paste" ? 0 : 1;
-}
-
-function numberField(value, key) {
-  return typeof value[key] === "number" ? value[key] : 0;
-}
-
-function shellQuote(value) {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

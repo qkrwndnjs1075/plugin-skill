@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -117,6 +117,37 @@ test("hook finds duplication introduced after the prompt baseline", () => {
     });
     assert.equal(stop.status, 0);
     assert.equal(JSON.parse(stop.stdout).decision, "block", `${stop.stdout}${stop.stderr}`);
+
+    // Existing families survive line shifts without another review.
+    runHook(scriptPath, hookEnvironment, {cwd:repoRoot,hook_event_name:'UserPromptSubmit',session_id:'shift'});
+    writeFileSync(join(repoRoot, 'generated.js'), '\n\n'+duplicatedFunction('summarizeGenerated'));
+    const shifted=runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'Stop',session_id:'shift'});
+    assert.deepEqual(JSON.parse(shifted.stdout), {});
+
+    // Both turns become contaminated even if B finishes before A.
+    runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'UserPromptSubmit',session_id:'A'});
+    runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'UserPromptSubmit',session_id:'B'});
+    writeFileSync(join(repoRoot,'third.js'),duplicatedFunction('summarizeThird'));
+    for (const session_id of ['B','A']) {
+      const overlapping=runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'Stop',session_id});
+      const output=JSON.parse(overlapping.stdout);
+      assert.match(output.systemMessage,/overlapping/);
+      assert.equal(output.decision,undefined);
+    }
+    // Completed registrations must not poison later, independent work.
+    runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'UserPromptSubmit',session_id:'C'});
+    writeFileSync(join(repoRoot,'fourth.js'),duplicatedFunction('summarizeFourth'));
+    const independent=runHook(scriptPath,hookEnvironment,{cwd:repoRoot,hook_event_name:'Stop',session_id:'C'});
+    assert.equal(JSON.parse(independent.stdout).decision,'block',independent.stdout);
+    const manual=spawnSync(process.execPath,[scriptPath.pathname,'scan',repoRoot],{env:hookEnvironment,encoding:'utf8'});
+    assert.equal(manual.status,0,manual.stdout);
+    assert.equal(JSON.parse(manual.stdout).status,'scanned');
+    const report=JSON.parse(readFileSync(join(repoRoot,'.nose-review/report.json'),'utf8'));
+    assert.ok(report.candidates.length>0);
+    const acceptance=spawnSync(process.execPath,[new URL('./review-policy.mjs',import.meta.url).pathname,'accept',repoRoot,report.candidates[0].fingerprint,'Intentional test fixture'],{encoding:'utf8'});
+    assert.equal(acceptance.status,0,acceptance.stderr);
+    const policy=JSON.parse(readFileSync(join(repoRoot,'.nose-review/baseline.json'),'utf8'));
+    assert.equal(policy.intentional[0].reason,'Intentional test fixture');
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
