@@ -22,6 +22,14 @@
     {
       "fingerprint": "3539b908621cb7895d2654ee4f223bcd3a394392ac77566dad96f5a9d8c0b5dc",
       "reason": "Installer fixture deliberately uses spaces and quotes in its temporary path to test shell quoting and creates a replaceable payload. Policy fixture builds source spans for fingerprint validation. Keep suite-owned setup and cleanup independent so quoting coverage does not depend on the policy fixture."
+    },
+    {
+      "fingerprint": "5b6ca0ce04cc7a3f70baf2293840169daab5c9d63d54bc9b4207c65a32dbc0f2",
+      "reason": "Paired positive and adversarial reduction tests deliberately repeat the same original and reduced family inputs. Their different full-current-scan membership must remain explicit to prove that an original still present cannot authorize an unrelated smaller family.",
+      "memberHashes": [
+        "752c72b5393be17e5625d508bd50cd899d55ed3fe48af7cd7af51188e3a8c1f2",
+        "e061ba9137f3c653e1fc3b909491868e94b3c0890ecdd2a2e0151295aea59f2f"
+      ]
     }
   ]
 }
