@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nose Fix"
+  short_description: "Fix Nose findings and record justified intentional duplication"
+  default_prompt: "Use $nose-fix to resolve Nose findings, judge intentional copies, and verify the result."

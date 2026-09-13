@@ -20,6 +20,17 @@ are excluded even when unrelated edits move their line numbers.
 
 ## Manual review and intentional duplication
 
+To resolve findings, invoke `$nose-fix` (shown as `nose-review:nose-fix` in plugin
+skill lists), for example: “Use $nose-fix to resolve the latest duplication report.”
+The model reads source and callers, refactors suitable copies, independently
+records source-backed reasons for intentional copies, then tests and rescans.
+Uncertain cases remain unaccepted with an explanation. Detection hooks remain
+read-only; the fix skill runs when you request fixes. No per-family approval is
+needed for intentional decisions within this workflow.
+
+The skill uses `nose-fix-scan.mjs` so its own active hook registration does not
+block a rescan. Other/overlapping sessions still prevent it from proceeding.
+
 From this plugin's directory, after repository editing has settled:
 
 ```sh
