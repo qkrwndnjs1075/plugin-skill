@@ -63,7 +63,7 @@ function validBaseline(baseline) {
       && typeof entry.reason === "string" && entry.reason.trim().length > 0);
 }
 
-function hash(value) {
+export function hash(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 

@@ -1,12 +1,11 @@
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, lstatSync, mkdtempSync, renameSync, realpathSync, existsSync } from 'node:fs';
 import { join, extname, dirname, parse } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { fingerprintFamily } from './review-policy.mjs';
+import { fingerprintFamily, hash } from './review-policy.mjs';
+export { hash } from './review-policy.mjs';
 
 const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.html','.java','.js','.jsx','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
-export const hash = value => createHash('sha256').update(value).digest('hex');
 const excluded = new Set(['.git','.nose-review','node_modules','.venv','venv','__pycache__','dist','build','target','vendor','.next','.nuxt','coverage','.cache']);
 export function projectRoot(cwd) {
   if (typeof cwd !== 'string' || !cwd) throw new Error('Project directory is required');
