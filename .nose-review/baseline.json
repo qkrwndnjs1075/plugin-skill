@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "noseVersion": "nose 0.21.0",
+  "accepted": [],
+  "intentional": [
+    {
+      "fingerprint": "dac607bbaa6378dca86833c058fc92d31e1a08f651406ebebd2b5b1f64bedc42",
+      "reason": "Installer bootstrap and review CLI own separate top-level failure boundaries and operation-specific systemMessage output. Keeping their four-line catch handlers local lets setup errors be reported without importing the review runtime."
+    },
+    {
+      "fingerprint": "a0cdcccdc2c6f32f4e326cf75dc2614384c090d9d94472e7ecba1b31e39473cf",
+      "reason": "Whole-file token overlap spans independent installer and snapshot-runtime test suites. Installer tests assert hook chaining, inode preservation and payload updates; runtime tests assert source limits and scan races. Their assertions and setup are different contracts, not a shared test implementation."
+    },
+    {
+      "fingerprint": "ff559406689331828b54820a3870312900cec6930cbff39510c0755825ab7d74",
+      "reason": "plainFiles walks directories with depth and visited-entry limits; snapshot hashes discovered source files and enforces byte limits. These loops process different inputs and return paths versus content hashes; combining them would break the Git-discovery and plain-folder separation."
+    },
+    {
+      "fingerprint": "f7fc7e799dbbd333c7a01b229c04704694e9b6971df0d79ecdfb439a8e02ec39",
+      "reason": "This match crosses review CLI output and catch boundaries against installer output branches. Legacy prompt output suppression and SessionStart installer output have distinct event contracts; retain their local protocol decisions."
+    },
+    {
+      "fingerprint": "3539b908621cb7895d2654ee4f223bcd3a394392ac77566dad96f5a9d8c0b5dc",
+      "reason": "Installer fixture deliberately uses spaces and quotes in its temporary path to test shell quoting and creates a replaceable payload. Policy fixture builds source spans for fingerprint validation. Keep suite-owned setup and cleanup independent so quoting coverage does not depend on the policy fixture."
+    }
+  ]
+}
