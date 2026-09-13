@@ -1,6 +1,6 @@
 {
   "name": "nose-review",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Review code generated during a Codex turn for duplication with Nose",
   "author": {
     "name": "qkrwndnjs1075"

@@ -2,7 +2,7 @@
 import { readFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { atomicJson, git, hash, register, scan, snapshot, withRegistry } from './review-runtime.mjs';
+import { atomicJson, projectRoot, hash, register, scan, snapshot, withRegistry } from './review-runtime.mjs';
 import { filterReviewed } from './review-policy.mjs';
 
 export function selectChangedFamilies(families, changedPaths, limit = 3) {
@@ -44,8 +44,7 @@ function finish(root, session, operation) {
 function main(input) {
   if (!['UserPromptSubmit','Stop'].includes(input.hook_event_name)) return {};
   if (typeof input.session_id!=='string' || !input.session_id) throw new Error('Missing session identity');
-  let root;
-  try { root=git(input.cwd,['rev-parse','--show-toplevel']).trim(); } catch { return {}; }
+  const root=projectRoot(input.cwd);
   const session=input.session_id;
   if (input.hook_event_name==='UserPromptSubmit') {
     const initial=register(root,session);
@@ -92,7 +91,7 @@ function main(input) {
 }
 function command(args) {
   const [action, path, confirmation]=args;
-  const root=git(path??process.cwd(),['rev-parse','--show-toplevel']).trim();
+  const root=projectRoot(path??process.cwd());
   if (action==='reset-state' && confirmation==='--confirm-idle') {
     return withRegistry(root,directory=>{
       for (const file of readdirSync(directory)) {

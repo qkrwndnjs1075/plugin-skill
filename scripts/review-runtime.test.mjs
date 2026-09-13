@@ -1,10 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { scan } from './review-runtime.mjs';
+import { scan, projectRoot, snapshot } from './review-runtime.mjs';
+
+test('plain folders exclude dependencies, build output and symlinks and enforce size limits', t=>{
+  const root=mkdtempSync(join(tmpdir(),'nose-plain-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  writeFileSync(join(root,'app.js'),'export const a = 1;');
+  for(const name of ['node_modules','dist','.venv','.nose-review']) {
+    mkdirSync(join(root,name));
+    writeFileSync(join(root,name,'ignored.js'),'export const a = 1;');
+  }
+  symlinkSync(join(root,'app.js'),join(root,'linked.js'));
+  assert.equal(projectRoot(root),realpathSync(root));
+  const originalPath=process.env.PATH;
+  process.env.PATH='';
+  try { assert.equal(projectRoot(root),realpathSync(root)); }
+  finally { process.env.PATH=originalPath; }
+  assert.deepEqual(Object.keys(snapshot(root)),['app.js']);
+  writeFileSync(join(root,'large.js'),Buffer.alloc(5*1024*1024+1));
+  assert.throws(()=>snapshot(root),/source limits/);
+});
+
+test('plain home and filesystem roots are rejected',()=>{
+  assert.throws(()=>projectRoot('/'),/project folder/);
+  assert.throws(()=>projectRoot(homedir()),/project folder/);
+});
 
 test('scan discards a result when source changes during Nose execution', t=>{
   const fixture=mkdtempSync(join(tmpdir(),'nose-race-'));

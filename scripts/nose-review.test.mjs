@@ -64,7 +64,7 @@ test("hook ignores code that was already dirty when the prompt started", () => {
   }
 });
 
-test("hook finds duplication introduced after the prompt baseline", () => {
+for (const managed of [true,false]) test(`hook finds duplication introduced after the prompt baseline (git=${managed})`, () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nose-review-test-"));
   const repoRoot = join(fixtureRoot, "repo");
   const stateRoot = join(fixtureRoot, "state");
@@ -73,12 +73,18 @@ test("hook finds duplication introduced after the prompt baseline", () => {
   mkdirSync(repoRoot);
 
   try {
+    if (managed) {
     execFileSync("git", ["init", "-q"], { cwd: repoRoot });
     execFileSync("git", ["config", "user.email", "nose-review@example.invalid"], { cwd: repoRoot });
     execFileSync("git", ["config", "user.name", "Nose Review Test"], { cwd: repoRoot });
     writeFileSync(join(repoRoot, "base.js"), duplicatedFunction("summarizeBase"));
     execFileSync("git", ["add", "base.js"], { cwd: repoRoot });
     execFileSync("git", ["commit", "-qm", "seed"], { cwd: repoRoot });
+    } else {
+      writeFileSync(join(repoRoot, "base.js"), duplicatedFunction("summarizeBase"));
+      mkdirSync(join(repoRoot,'node_modules'));
+      writeFileSync(join(repoRoot,'node_modules','ignored.js'),duplicatedFunction('ignoredCopy'));
+    }
     const hookEnvironment = {
       ...process.env,
       NOSE_REVIEW_CACHE_ROOT: cacheRoot,
@@ -144,6 +150,7 @@ test("hook finds duplication introduced after the prompt baseline", () => {
     assert.equal(JSON.parse(manual.stdout).status,'scanned');
     const report=JSON.parse(readFileSync(join(repoRoot,'.nose-review/report.json'),'utf8'));
     assert.ok(report.candidates.length>0);
+    assert.ok(report.candidates.every(family=>family.locations.every(location=>!location.file.includes('node_modules/'))));
     const acceptance=spawnSync(process.execPath,[new URL('./review-policy.mjs',import.meta.url).pathname,'accept',repoRoot,report.candidates[0].fingerprint,'Intentional test fixture'],{encoding:'utf8'});
     assert.equal(acceptance.status,0,acceptance.stderr);
     const policy=JSON.parse(readFileSync(join(repoRoot,'.nose-review/baseline.json'),'utf8'));

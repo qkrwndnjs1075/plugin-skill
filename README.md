@@ -4,7 +4,12 @@ A Codex hook plugin for reviewing newly introduced code duplication with [Nose](
 
 ## Automatic use
 
-Start a new Codex session in a Git repository and work normally. The plugin scans
+Start a new Codex session in a project folder and work normally. Git is optional.
+Git projects use the repository root; other projects use the session's starting
+working directory (canonicalized so path aliases share concurrency state).
+For plain folders, always open the same project root in concurrent sessions;
+different nested starting folders are separate scopes, not automatically merged.
+The plugin scans
 at prompt start and, if code changed, scans again at Stop. It compares duplicate
 families by source-span content and requests one **read-only** review of at most
 three new or changed families. It does not automatically refactor or accept findings.
@@ -58,9 +63,18 @@ Then run a manual scan or start a new turn. Registrations do not expire silently
 
 ## Requirements and costs
 
-- Nose on PATH (verified with 0.21.0), Git, and Node.js (20 or newer).
+- Nose on PATH (verified with 0.21.0) and Node.js (20 or newer).
+- Git is required only for Git-managed projects; plain folders work without it.
 - Codex with trusted UserPromptSubmit and Stop plugin hooks.
-- Git repositories only; ignored files are excluded from change snapshots.
+- Git projects retain Git-based file discovery. Plain folders skip symlinks and
+  dependency/build directories: node_modules, .venv, venv, __pycache__, dist,
+  build, target, vendor, .next, .nuxt, coverage, .cache, .git and .nose-review.
+  These exclusions are also supplied to Nose. Nose additionally honors .gitignore;
+  the plain-folder snapshot may include extra ignored source files, causing an
+  unnecessary scan but not overriding Nose's exclusions.
+- Plain folders are limited to 20,000 visited directory entries, depth 64,
+  10,000 source files, 5 MiB per source file and 100 MiB of source total.
+  Exceeding a limit reports a deferred scan. Home/filesystem roots are rejected.
 - Two scans per code-changing turn, one on an unchanged turn. Large repositories
   may hit the timeout; scan failure is reported, never claimed as a pass.
 - Source files and registered state are read locally. Generated review output is
