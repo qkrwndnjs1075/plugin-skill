@@ -24,6 +24,13 @@ locations/fingerprints as the requested scope. Reports can be stale. Refresh wit
 node "$NOSE_PLUGIN_ROOT/scripts/nose-fix-scan.mjs" "$NOSE_PROJECT_ROOT"
 ```
 
+For a past failed push, read its timestamped `.nose-review/failures/` record when
+the latest report has been replaced, then refresh source evidence as below.
+History is evidence of that attempt, not proof that current files still match.
+`NOSE_SECRETS_BLOCKED` is not a duplication finding: do not accept it with this
+skill or print credential values. Cleaning an earlier outgoing commit requires
+explicit history-rewrite approval; already exposed credentials need owner rotation.
+
 Pre-push reports may describe committed snapshots rather than current working
 files. Read their per-ref SHAs and warnings; an empty failed report is not proof
 of no duplication. Refresh before acting. If the user explicitly requests a
@@ -94,6 +101,9 @@ node "$NOSE_PLUGIN_ROOT/scripts/review-policy.mjs" accept \
 The model chooses and records the reason; no routine confirmation is needed.
 Use the validated command, not direct baseline edits or blanket acceptance. If
 the command rejects a version/source mismatch, resolve the mismatch first.
+The command records member hashes so removing copies alone can be recognized as
+a reduction. Old decisions without member hashes still match exactly but cannot
+prove reductions; only re-record them after checking their current source.
 
 Run the skill scan again. Check repaired locations against the final families,
 including changed family membership; disappearance of an old ID alone is not

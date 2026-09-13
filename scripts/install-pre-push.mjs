@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync, appendFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const marker='# nose-review managed pre-push v1';
-const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs'];
+const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs','secret-scan.mjs','failure-history.mjs'];
 const quote=text=>"'"+text.replaceAll("'","'\"'\"'")+"'";
 function git(cwd,args) {
   const result=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});
@@ -17,6 +17,14 @@ function regular(path) {
   if(existsSync(path) && !lstatSync(path).isFile()) throw new Error('Refusing non-regular hook or backup: '+path);
   // existsSync follows symlinks, so separately reject dangling ones too.
   if(lstatSync(path,{throwIfNoEntry:false})?.isSymbolicLink()) throw new Error('Refusing symlink: '+path);
+}
+function ignoreLocalReports(root) {
+  const path=resolve(root,git(root,['rev-parse','--git-path','info/exclude']));
+  regular(path);
+  mkdirSync(dirname(path),{recursive:true});
+  const old=existsSync(path)?readFileSync(path,'utf8'):'';
+  const missing=['/.nose-review/report.json','/.nose-review/failures/'].filter(line=>!old.split(/\r?\n/).includes(line));
+  if(missing.length) appendFileSync(path,(old && !old.endsWith('\n')?'\n':'')+missing.join('\n')+'\n',{mode:0o600});
 }
 export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
   let root;
@@ -44,7 +52,25 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
     const ours=existing?.startsWith('#!/bin/sh\n'+marker+'\n');
     if(existing!==null && !ours && existsSync(backup)) throw new Error('Original hook backup already exists; resolve manually');
     const data=sources.map(name=>[name,readFileSync(join(source,name),'utf8')]);
-    const dispatcher=`import {readFileSync,existsSync,statSync} from 'node:fs';\nimport {spawnSync} from 'node:child_process';\nimport {fileURLToPath} from 'node:url';\nconst input=readFileSync(0);\nconst original=${JSON.stringify(backup)};\nif(existsSync(original) && (statSync(original).mode & 0o111)) {\n const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});\n if(result.error || result.status!==0) process.exit(result.status || 1);\n}\nconst check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','inherit'],timeout:180000});\nif(check.error || check.signal) { console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete'); process.exit(2); }\nprocess.exit(check.status ?? 2);\n`;
+    const dispatcher=`import {readFileSync,existsSync,statSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {saveFailure} from './failure-history.mjs';
+const input=readFileSync(0);
+const original=${JSON.stringify(backup)};
+if(existsSync(original) && (statSync(original).mode & 0o111)) {
+ const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});
+ if(result.error || result.status!==0) process.exit(result.status || 1);
+}
+const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','inherit'],timeout:180000});
+if(check.error || check.signal) {
+ console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete');
+ try { console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed or exceeded 180 seconds'})); }
+ catch { console.error('Failure history could not be saved'); }
+ process.exit(2);
+}
+process.exit(check.status ?? 2);
+`;
     data.push(['dispatch.mjs',dispatcher]);
     const id=createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0,20);
     const release=join(managed,id);
@@ -57,6 +83,7 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
       } finally { rmSync(staging,{recursive:true,force:true}); }
     }
     const content='#!/bin/sh\n'+marker+'\nexec '+quote(process.execPath)+' '+quote(join(release,'dispatch.mjs'))+' "$@"\n';
+    ignoreLocalReports(root);
     if(existing===content) return {status:'current',hook};
     const temporary=join(managed,'pre-push.tmp');
     writeFileSync(temporary,content,{mode:0o755});

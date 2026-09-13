@@ -12,7 +12,8 @@ function fixture(t) {
   const repo=join(temp,'repo'),source=join(temp,'payload');
   mkdirSync(repo);mkdirSync(source);
   execFileSync('git',['init','-q'],{cwd:repo});
-  for(const name of ['review-runtime.mjs','review-policy.mjs']) writeFileSync(join(source,name),'');
+  for(const name of ['review-runtime.mjs','review-policy.mjs','secret-scan.mjs','failure-history.mjs']) writeFileSync(join(source,name),'');
+  writeFileSync(join(source,'failure-history.mjs'),'export function saveFailure() { return "fixture-history"; }');
   writeFileSync(join(source,'nose-pre-push.mjs'),"import {readFileSync,writeFileSync} from 'node:fs';writeFileSync(process.env.NOSE_TEST_OUTPUT,JSON.stringify({args:process.argv.slice(2),input:readFileSync(0,'utf8')}));");
   return {temp,repo,source,hooks:join(repo,'.git/hooks')};
 }
@@ -81,4 +82,16 @@ test('non-Git project needs no hook and repeated install updates payload without
   writeFileSync(join(f.source,'review-runtime.mjs'),'// new version\n');
   assert.equal(install(f.repo,f.source).status,'installed');
   assert.equal(readFileSync(first.previousHook,'utf8'),original);
+});
+
+test('installation preserves local exclusions and ignores reports without hiding baseline decisions',t=>{
+  const f=fixture(t), exclude=join(f.repo,'.git/info/exclude');
+  writeFileSync(exclude,'existing-local-rule\n');
+  install(f.repo,f.source);
+  const first=readFileSync(exclude,'utf8');
+  install(f.repo,f.source);
+  assert.equal(readFileSync(exclude,'utf8'),first);
+  assert.match(first,/existing-local-rule/);
+  assert.equal(spawnSync('git',['check-ignore','.nose-review/failures/run.json'],{cwd:f.repo}).status,0);
+  assert.equal(spawnSync('git',['check-ignore','.nose-review/baseline.json'],{cwd:f.repo}).status,1);
 });

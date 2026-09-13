@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, realpathSync, readdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { install } from './install-pre-push.mjs';
@@ -31,7 +32,8 @@ function fixture(t) {
   const line = (local = sha, remote = zero, ref = 'main') => `refs/heads/${ref} ${local} refs/heads/${ref} ${remote}\n`;
   const run = (input = line(), env = process.env) => spawnSync(process.execPath, [runner, 'origin', 'local-fixture'], {cwd:root, input, env, encoding:'utf8'});
   const report = () => JSON.parse(readFileSync(join(root, '.nose-review/report.json'), 'utf8'));
-  return {root, git, sha, line, run, report};
+  const push=()=>spawnSync('git',['push','origin','HEAD:refs/heads/main'],{cwd:root,encoding:'utf8'});
+  return {root, git, sha, line, run, report, push};
 }
 
 test('unreviewed pushed duplicates block even if already on remote or removed from working files', t => {
@@ -128,7 +130,7 @@ for(const resolution of ['refactor','intentional']) test(`real push is blocked u
   f.git('init','--bare','-q',remote);
   f.git('remote','add','origin',remote);
   install(f.root);
-  const push=()=>spawnSync('git',['push','origin','HEAD:refs/heads/main'],{cwd:f.root,encoding:'utf8'});
+  const push=f.push;
   const rejected=push();
   assert.notEqual(rejected.status,0);
   assert.equal(f.report().gateStatus,'blocked');
@@ -149,4 +151,75 @@ for(const resolution of ['refactor','intentional']) test(`real push is blocked u
   assert.equal(accepted.status,0,accepted.stderr);
   assert.equal(f.report().gateStatus,'passed');
   assert.equal(f.git('--git-dir',remote,'rev-parse','refs/heads/main'),f.git('rev-parse','HEAD'));
+});
+
+test('real push catches secrets in earlier outgoing commits and retains sanitized failure after success',t=>{
+  const f=fixture(t), remote=join(f.root,'remote.git');
+  f.git('init','--bare','-q',remote);
+  f.git('remote','add','origin',remote);
+  const token=['gh','p_'].join('')+randomBytes(18).toString('hex');
+  writeFileSync(join(f.root,'a.js'),'export const a = 1;');
+  writeFileSync(join(f.root,'b.js'),'export const b = 2;');
+  writeFileSync(join(f.root,'credentials.txt'),'token='+token);
+  f.git('add','a.js','b.js','credentials.txt');f.git('commit','-qm','synthetic secret');
+  const exposed=f.git('rev-parse','HEAD');
+  f.git('rm','-q','credentials.txt');f.git('commit','-qm','remove from tip');
+  install(f.root);
+  const push=f.push;
+  const blocked=push();
+  assert.notEqual(blocked.status,0);
+  assert.match(blocked.stderr,/NOSE_SECRETS_BLOCKED/);
+  assert.ok(!blocked.stderr.includes(token));
+  assert.equal(f.report().candidates.length,0);
+  assert.ok(f.report().refs[0].secrets.findings.some(item=>item.commit===exposed));
+  const history=f.report().failureHistory;
+  const saved=readFileSync(history,'utf8');
+  assert.ok(!saved.includes(token));
+  assert.notEqual(spawnSync('git',['--git-dir',remote,'rev-parse','--verify','refs/heads/main']).status,0);
+  // A separate safe lineage proves the history remains after a later successful push.
+  f.git('switch','-qc','safe',f.sha);
+  writeFileSync(join(f.root,'a.js'),'export const a = 1;');
+  writeFileSync(join(f.root,'b.js'),'export const b = 2;');
+  f.git('add','a.js','b.js');f.git('commit','-qm','safe source');
+  const passed=push();
+  assert.equal(passed.status,0,passed.stderr);
+  assert.equal(f.report().gateStatus,'passed');
+  assert.equal(readFileSync(history,'utf8'),saved);
+});
+
+test('real pushed reviewed family reduction passes while added copies block',t=>{
+  const f=fixture(t), remote=join(f.root,'remote.git');
+  writeFileSync(join(f.root,'c.js'),source('gamma'));
+  f.git('add','c.js');f.git('commit','-qm','three independent fixture copies');
+  f.run(f.line(f.git('rev-parse','HEAD')));
+  const family=f.report().candidates.find(c=>c.locations.length===3);
+  assert.ok(family);
+  execFileSync(process.execPath,[new URL('./review-policy.mjs',import.meta.url).pathname,'accept',f.root,family.fingerprint,'Independent deployment fixture contracts'],{cwd:f.root});
+  f.git('add','.nose-review/baseline.json');f.git('commit','-qm','review independent contracts');
+  f.git('init','--bare','-q',remote);f.git('remote','add','origin',remote);install(f.root);
+  const push=f.push;
+  assert.equal(push().status,0);
+  f.git('rm','-q','c.js');f.git('commit','-qm','remove independent copy');
+  const reduced=push();
+  assert.equal(reduced.status,0,reduced.stderr);
+  assert.equal(f.report().refs[0].reductions.length,1);
+  assert.match(reduced.stderr,/ADVISORY reduction/);
+  writeFileSync(join(f.root,'c.js'),source('gamma'));
+  writeFileSync(join(f.root,'d.js'),source('delta'));
+  f.git('add','c.js','d.js');f.git('commit','-qm','grow beyond reviewed copies');
+  assert.notEqual(push().status,0);
+  assert.equal(f.report().gateStatus,'blocked');
+  assert.ok(readdirSync(join(f.root,'.nose-review/failures')).length>0);
+});
+
+test('secret scans inspect symlink blob text without following its target',t=>{
+  const f=fixture(t);
+  const token=['gh','p_'].join('')+randomBytes(18).toString('hex');
+  symlinkSync(token,join(f.root,'reference'));
+  f.git('add','reference');f.git('commit','-qm','synthetic symlink secret');
+  const result=f.run(f.line(f.git('rev-parse','HEAD')));
+  assert.equal(result.status,1,result.stderr);
+  assert.match(result.stderr,/NOSE_SECRETS_BLOCKED/);
+  assert.ok(!result.stderr.includes(token));
+  assert.ok(f.report().refs[0].secrets.findings.some(finding=>finding.file==='reference'));
 });

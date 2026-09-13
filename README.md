@@ -1,6 +1,6 @@
 # Nose Review
 
-Code duplication checks at push time, with an on-demand `$nose-fix` skill.
+Code duplication and secret checks at push time, with an on-demand `$nose-fix` skill.
 
 ## Automatic installation
 
@@ -35,6 +35,22 @@ Only reviewed fingerprints and intentional decisions in the **pushed**
 Content fingerprints exclude file paths, line offsets and trailing whitespace.
 Uncommitted decisions do not affect a push check.
 
+New intentional decisions include verified per-member hashes. When a reviewed
+family disappears and the remaining members are a strict sub-multiset of it,
+Nose reports a reduction advisory instead of blocking. New growth or edits beyond
+the reviewed membership still require review. The old exact reviewed family stays
+accepted until its decision is replaced; reduction does not silently rewrite the
+baseline. Legacy decisions without member hashes retain exact-match
+behavior; re-record a current reviewed family to enable reduction recognition.
+
+Gitleaks also checks the pushed tip and every outgoing commit tree, so deleting a
+credential in a later commit does not hide its earlier occurrence. An unavailable
+remote commit conservatively scans the reachable local history. This can cost
+more on first pushes. Checks use Gitleaks built-in rules, without repository or
+environment allowlists or inline suppression. Findings contain only rule, file,
+line and commit, never the credential value or source excerpt. This detects known
+secret patterns, not every possible secret, and does not inspect nested archives.
+
 On every push, all unreviewed families in the pushed snapshot block delivery;
 nothing is silently accepted as an initial
 baseline. To establish reviewed exceptions, use `$nose-fix` and commit its
@@ -47,6 +63,22 @@ duplication (`NOSE_DUPLICATION_BLOCKED`); exit 2 means the check could not compl
 (`NOSE_CHECK_UNAVAILABLE`), including invalid baselines or missing tools. Both
 reject the push. Ref deletion needs no scan. Submodule/archive limitations also
 block as unavailable rather than silently claiming coverage.
+
+`NOSE_SECRETS_BLOCKED` is a separate failure: remove credentials from outgoing
+commits and arrange owner rotation for already exposed credentials. A new removal
+commit alone cannot clean earlier outgoing commits. History rewriting requires
+explicit user approval; the plugin never rewrites history or accepts secrets as
+intentional duplication. Gitleaks missing or failing blocks as unavailable.
+
+Each failed plugin gate saves a timestamp/UUID-named JSON record under
+`.nose-review/failures/` (private directory and files). Later scans can replace
+`report.json` but never overwrite these records, even after success. Records
+contain commit IDs, findings locations and check errors, not raw scanner logs or
+source excerpts. Retention is indefinite until manually removed. The installer
+adds report/history paths to Git's local `info/exclude`, preserving existing
+entries; baseline decisions remain trackable. If storage is unsafe or unwritable,
+the gate still blocks and explicitly reports that history could not be saved.
+Failures of a pre-existing hook are still owned and reported by that hook.
 
 For a user-authorized agent push, SessionStart instructs the agent to invoke
 `$nose-fix` after a duplication rejection, test, commit scoped fixes or justified
@@ -106,12 +138,13 @@ output. Acceptance rejects stale source spans or incompatible Nose versions.
 
 ## Requirements and limits
 
-- Node.js 20+, Nose on PATH (tested with 0.21.0).
+- Node.js 20+, Nose and Gitleaks on PATH (tested with Nose 0.21.0 and Gitleaks 8.29.1).
+  Gitleaks is a prerequisite, not silently installed by SessionStart.
 - Git and tar for pre-push commit snapshots. No Git is required for manual folder scans.
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
-- Nose has a 45-second limit per scan; the dispatcher bounds the complete Nose
+- Nose and Gitleaks each have a 45-second limit per scan; the dispatcher bounds the complete
   invocation to 180 seconds. A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
@@ -129,3 +162,5 @@ committed reviewed baselines, missing tools, Git and plain-folder manual workflo
 original hook argument/stdin/exit preservation, repeat installation and updates,
 and real local pushes rejected then accepted after committed fixes or intentional
 decisions. Automated tests validate the gate, not model judgment quality.
+Additional regressions cover outgoing-history secret detection and redaction,
+retained failure records, and reviewed membership reduction versus growth.
