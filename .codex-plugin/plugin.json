@@ -1,14 +1,14 @@
 {
   "name": "nose-review",
-  "version": "0.3.0",
-  "description": "Review code generated during a Codex turn for duplication with Nose",
+  "version": "0.5.0",
+  "description": "Review pushed code for duplication and resolve findings with Nose Fix",
   "author": {
     "name": "qkrwndnjs1075"
   },
   "interface": {
     "displayName": "Nose Review",
-    "shortDescription": "Review changed code for duplication before Codex finishes.",
-    "longDescription": "Compares content fingerprints from prompt-start and final Nose scans, remembers intentional duplication, and requests a read-only review of up to three new families. Overlapping sessions defer review.",
+    "shortDescription": "Block unreviewed duplication before push and resolve findings.",
+    "longDescription": "Automatically registers a preserving, blocking Git pre-push gate when a trusted Codex project session starts. Reviews pushed commits against committed decisions and guides authorized agent pushes through Nose Fix and retry.",
     "developerName": "qkrwndnjs1075",
     "category": "Productivity",
     "capabilities": [],

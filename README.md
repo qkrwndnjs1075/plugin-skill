@@ -1,107 +1,131 @@
 # Nose Review
 
-A Codex hook plugin for reviewing newly introduced code duplication with [Nose](https://github.com/corca-ai/nose).
+Code duplication checks at push time, with an on-demand `$nose-fix` skill.
 
-## Automatic use
+## Automatic installation
 
-Start a new Codex session in a project folder and work normally. Git is optional.
-Git projects use the repository root; other projects use the session's starting
-working directory (canonicalized so path aliases share concurrency state).
-For plain folders, always open the same project root in concurrent sessions;
-different nested starting folders are separate scopes, not automatically merged.
-The plugin scans
-at prompt start and, if code changed, scans again at Stop. It compares duplicate
-families by source-span content and requests one **read-only** review of at most
-three new or changed families. It does not automatically refactor or accept findings.
+Install the plugin, trust its hook, and open a **new Codex session in the Git
+project**. The SessionStart hook installs or updates that project's pre-push
+dispatcher automatically. It does not run a Nose scan.
 
-Content fingerprints ignore file paths, line offsets, and trailing whitespace.
-They preserve internal whitespace and duplicate member count. Existing families
-are excluded even when unrelated edits move their line numbers.
+Codex has no project-scoped post-install callback: merely downloading this plugin
+does not discover and edit all repositories on your computer. Registration occurs
+when a project is opened, after hook trust. Reopen the project after updating the
+plugin so its Git hook payload gets refreshed.
 
-## Manual review and intentional duplication
-
-To resolve findings, invoke `$nose-fix` (shown as `nose-review:nose-fix` in plugin
-skill lists), for example: “Use $nose-fix to resolve the latest duplication report.”
-The model reads source and callers, refactors suitable copies, independently
-records source-backed reasons for intentional copies, then tests and rescans.
-Uncertain cases remain unaccepted with an explanation. Detection hooks remain
-read-only; the fix skill runs when you request fixes. No per-family approval is
-needed for intentional decisions within this workflow.
-
-The skill uses `nose-fix-scan.mjs` so its own active hook registration does not
-block a rescan. Other/overlapping sessions still prevent it from proceeding.
-
-From this plugin's directory, after repository editing has settled:
+For the currently open project, registration can also be run explicitly:
 
 ```sh
-node scripts/nose-review.mjs scan /path/to/repository
+node scripts/install-pre-push.mjs /path/to/project
 ```
 
-Read `.nose-review/report.json` in that repository, inspect the source, and
-record a single intentional family with an explicit reason:
+There are **no UserPromptSubmit or Stop scan hooks**. Ordinary prompts do not
+trigger Nose. Gitless folders are silently skipped by auto-registration; use the
+manual workflow below.
+
+## What happens on push
+
+The dispatcher first runs any executable pre-existing pre-push with its original
+arguments and standard input. Its nonzero exit still rejects the push. If it
+passes, Nose inspects each pushed local commit in a temporary snapshot, without
+checking out branches or changing the index or working tree.
+
+Only reviewed fingerprints and intentional decisions in the **pushed**
+`.nose-review/baseline.json` exempt findings. Remote presence alone is not review.
+Content fingerprints exclude file paths, line offsets and trailing whitespace.
+Uncommitted decisions do not affect a push check.
+
+On every push, all unreviewed families in the pushed snapshot block delivery;
+nothing is silently accepted as an initial
+baseline. To establish reviewed exceptions, use `$nose-fix` and commit its
+justified decisions. The supported baseline schema also permits a reviewed
+`accepted` fingerprint list; the installer never seeds that list automatically.
+
+Results appear in the push output and `.nose-review/report.json`. The report
+includes per-ref commit IDs, findings, and scan warnings. Exit 1 means unreviewed
+duplication (`NOSE_DUPLICATION_BLOCKED`); exit 2 means the check could not complete
+(`NOSE_CHECK_UNAVAILABLE`), including invalid baselines or missing tools. Both
+reject the push. Ref deletion needs no scan. Submodule/archive limitations also
+block as unavailable rather than silently claiming coverage.
+
+For a user-authorized agent push, SessionStart instructs the agent to invoke
+`$nose-fix` after a duplication rejection, test, commit scoped fixes or justified
+intentional decisions, and retry that push, with at most two fix-and-retry cycles
+after the initial rejection.
+Unresolved findings remain blocking. Check errors require repair, not acceptance.
+Do not bypass hooks or blanket-accept findings. A terminal-only push cannot invoke
+an agent: ask Codex to resolve its report and retry. Ordinary prompts do not
+authorize automatic edits, commits, or pushes.
+
+This is a pushed-tree review, not an attribution of changes to individual agents.
+It does not prevent other sessions from editing source; snapshots keep a push
+check independent of those edits. Reports can be replaced by another scan.
+
+## Existing hooks and uninstall
+
+The original hook is retained beside pre-push as `pre-push.nose-review-original`.
+Other hooks are untouched. Project-local `core.hooksPath` is honored.
+External/shared hook directories and symlinked pre-push files are preserved and
+produce a setup notice instead of being overwritten.
+
+The dispatcher uses a versioned payload copied under the hooks directory's
+`.nose-review/` folder. It keeps working outside Codex and when a Codex plugin
+cache is replaced. Node.js and Nose must remain available.
+An identical payload leaves the hook untouched; changed payloads update it
+without replacing the saved original hook.
+
+Uninstalling the Codex plugin does not remove repository-local Git hooks.
+To undo a registration, first inspect the installed hook path printed at setup.
+Restore its sibling `pre-push.nose-review-original` if present; otherwise remove
+only the generated pre-push. The payload directory can be retained or removed
+after no dispatcher uses it.
+
+## Manual work and fixes
+
+At task completion, or in a folder without Git:
 
 ```sh
-node scripts/review-policy.mjs accept /path/to/repository FINGERPRINT "Separate ownership requires this copy"
+node scripts/nose-review.mjs scan /path/to/project
 ```
 
-Commit `.nose-review/baseline.json` to share decisions. Ignore
-`.nose-review/report.json` in the target repository: it is generated review output.
-Acceptance checks the current source spans and installed Nose version. A changed
-family must be reviewed again. Version/schema mismatches are reported instead of
-silently accepting old decisions. There is no blanket acceptance command.
+Or ask: “Use `$nose-fix` to resolve the latest duplication report.”
+The skill refreshes evidence, refactors appropriate copies, independently records
+concrete reasons for intentional copies, and runs relevant tests and a final scan.
+Uncertain candidates remain unaccepted. Invoking the skill authorizes these
+decisions. Authorized agent-push recovery also invokes this workflow; merely
+displaying an unrelated report does not authorize source edits.
 
-## Concurrent sessions
+To review the whole project instead of the latest report, explicitly request a
+full-project scan. A manual scan reads current working files, which may differ
+from the commit inspected by pre-push. Treat stored commit findings as candidates
+and refresh before editing or accepting them.
 
-Overlapping registered sessions in the same worktree are **all** marked
-contaminated, including the session that started first. They receive a visible
-deferred-review message. A scan also checks code hashes before and after reading
-source and discards results if the code changed. Each scan has its own temporary
-cache and a 45-second timeout.
+Commit `.nose-review/baseline.json` to share intentional decisions. Add
+`.nose-review/report.json` to the target project's ignore file: it is generated
+output. Acceptance rejects stale source spans or incompatible Nose versions.
 
-These checks do not establish edit ownership or freeze the filesystem.
-Editors, older plugin versions, unregistered agents, and edits after a scan are
-not fully covered. Use separate worktrees for reliable parallel review. The
-follow-up is explicitly read-only to avoid refactoring another worker's code.
+## Requirements and limits
 
-An interrupted process can leave an active registration. After confirming that
-**all sessions in that worktree have stopped**, clear registrations explicitly:
+- Node.js 20+, Nose on PATH (tested with 0.21.0).
+- Git and tar for pre-push commit snapshots. No Git is required for manual folder scans.
+- Gitless/manual snapshot scans skip dependency/build folders and symlinks;
+  limits are 20,000 visited entries, depth 64, 10,000 source files,
+  5 MiB per source file, and 100 MiB total source.
+- Nose has a 45-second limit per scan; the dispatcher bounds the complete Nose
+  invocation to 180 seconds. A failure/timeout blocks and is reported.
+- An older open Codex session may still have old prompt hooks. Restart it.
+  If a legacy registration remains after all old sessions have stopped, use
+  `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.
+- No per-prompt refactoring or Markdown duplicate review.
 
-```sh
-node scripts/nose-review.mjs reset-state /path/to/repository --confirm-idle
-```
-
-Then run a manual scan or start a new turn. Registrations do not expire silently.
-
-## Requirements and costs
-
-- Nose on PATH (verified with 0.21.0) and Node.js (20 or newer).
-- Git is required only for Git-managed projects; plain folders work without it.
-- Codex with trusted UserPromptSubmit and Stop plugin hooks.
-- Git projects retain Git-based file discovery. Plain folders skip symlinks and
-  dependency/build directories: node_modules, .venv, venv, __pycache__, dist,
-  build, target, vendor, .next, .nuxt, coverage, .cache, .git and .nose-review.
-  These exclusions are also supplied to Nose. Nose additionally honors .gitignore;
-  the plain-folder snapshot may include extra ignored source files, causing an
-  unnecessary scan but not overriding Nose's exclusions.
-- Plain folders are limited to 20,000 visited directory entries, depth 64,
-  10,000 source files, 5 MiB per source file and 100 MiB of source total.
-  Exceeding a limit reports a deferred scan. Home/filesystem roots are rejected.
-- Two scans per code-changing turn, one on an unchanged turn. Large repositories
-  may hit the timeout; scan failure is reported, never claimed as a pass.
-- Source files and registered state are read locally. Generated review output is
-  written under the target repository's `.nose-review/` directory.
-- This is code review assistance, not a commit/push gate or Markdown duplicate checker.
-- Comment changes and removing a member can produce a changed family requiring
-  review; language-aware normalization and reduction classification are not implemented.
-
-## Verification
+## Validation
 
 ```sh
 node --test scripts/*.test.mjs
 ```
 
-Regression coverage includes real Nose scans, new versus existing duplication,
-line shifts, overlapping sessions with the later session finishing first and subsequent recovery,
-manual review and acceptance, source/version staleness, and path containment.
-The Charness quality design informed content fingerprints and explicit decisions;
-this plugin keeps a bounded per-turn review workflow.
+Coverage includes pushed-commit scans independent of dirty working files,
+committed reviewed baselines, missing tools, Git and plain-folder manual workflows,
+original hook argument/stdin/exit preservation, repeat installation and updates,
+and real local pushes rejected then accepted after committed fixes or intentional
+decisions. Automated tests validate the gate, not model judgment quality.

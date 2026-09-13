@@ -1,6 +1,6 @@
 ---
 name: nose-fix
-description: Resolve Nose duplication findings when the user asks to fix or clean up detected duplicates. Refactor appropriate candidates, independently judge intentional duplication, record justified exceptions, and verify behavior and the final scan. Detection-only hook feedback is not a request to run this skill.
+description: Resolve Nose duplication findings when the user asks to fix duplicates or a user-authorized push fails with NOSE_DUPLICATION_BLOCKED. Refactor appropriate candidates, judge intentional duplication, record justified exceptions, and verify behavior. Unrelated detection-only feedback does not authorize edits.
 ---
 
 # Nose Fix
@@ -24,7 +24,16 @@ locations/fingerprints as the requested scope. Reports can be stale. Refresh wit
 node "$NOSE_PLUGIN_ROOT/scripts/nose-fix-scan.mjs" "$NOSE_PROJECT_ROOT"
 ```
 
-The helper uses `CODEX_THREAD_ID` to recognize the current hook registration.
+Pre-push reports may describe committed snapshots rather than current working
+files. Read their per-ref SHAs and warnings; an empty failed report is not proof
+of no duplication. Refresh before acting. If the user explicitly requests a
+full-project cleanup, use the refreshed project-wide candidates even if an older
+report exists, processing them in bounded batches.
+
+The helper uses `CODEX_THREAD_ID` to recognize any legacy hook registration.
+SessionStart now only installs pre-push; it does not register an editing lock.
+The helper's scan stability check does not prove edit ownership. Coordinate
+overlapping edits and preserve unrelated work before changing candidate files.
 If there is no prior report, select up to three high-value unreviewed families
 from the refreshed report. If a report existed, resolve those candidates against
 current source; do not expand into unrelated project-wide cleanup. A changed
@@ -53,7 +62,24 @@ Similarity alone does not establish shared responsibility.
 
 Use focused regression tests where existing coverage does not protect the change.
 Run the relevant project checks. Do not alter unrelated dirty work or weaken tests
-to make a refactor pass. The skill does not authorize commits or pushes.
+to make a refactor pass. A standalone skill request does not authorize commits or
+pushes; the authorized-push recovery below is the scoped exception.
+
+## Recover an authorized push
+
+When a push the user requested fails with `NOSE_DUPLICATION_BLOCKED`, apply this
+workflow to that report without waiting for a separate cleanup request. After
+tests and the final scan, commit only your scoped fixes and intentional decisions,
+preserving unrelated index and worktree changes, then retry the same authorized
+push. Decisions must be committed: working-tree changes cannot exempt a pushed
+snapshot. Never force-push, bypass hooks, or blanket-accept to pass the gate.
+
+After the initial rejected push, use at most two fix-and-retry cycles. If evidence
+is insufficient, candidate edits overlap another person's uncommitted work,
+other pushed refs need separate work, or the gate still rejects, stop and report
+the remaining blocker. `NOSE_CHECK_UNAVAILABLE` is a tool/input failure, not a
+duplication decision: repair the check or report the blocker without accepting
+findings. No new remote, branch, or unrelated commit is authorized by recovery.
 
 ## Record intentional decisions and verify
 

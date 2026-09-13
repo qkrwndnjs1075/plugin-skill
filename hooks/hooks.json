@@ -1,25 +1,13 @@
 {
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/scripts/nose-review.mjs\"",
-            "timeout": 120,
-            "statusMessage": "Preparing Nose review"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/scripts/nose-review.mjs\"",
-            "timeout": 120,
-            "statusMessage": "Reviewing changed code with Nose"
+            "command": "node \"${PLUGIN_ROOT}/scripts/install-pre-push.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Setting up Nose pre-push"
           }
         ]
       }
