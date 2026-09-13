@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, lstatSync, mkdtempSync, renameSync, realpathSync, existsSync } from 'node:fs';
 import { join, extname, dirname, parse } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { fingerprintFamily, hash } from './review-policy.mjs';
+import { memberHashesForFamily, hash } from './review-policy.mjs';
 export { hash } from './review-policy.mjs';
 
 const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.html','.java','.js','.jsx','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
@@ -108,7 +108,10 @@ export function scan(root) {
     if (result.status!==0) throw new Error('Nose scan failed or exceeded 45 seconds');
     const report = JSON.parse(result.stdout);
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
-    const families = report.families.map(family=>({...family,fingerprint:fingerprintFamily(family,root)}));
+    const families = report.families.map(family=>{
+      const memberHashes=memberHashesForFamily(family,root);
+      return {...family,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))};
+    });
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root))) throw new Error('Code changed during scan; review deferred');
     return {noseVersion:version.stdout.trim(),families,files:before};
   } finally { rmSync(cache,{recursive:true,force:true}); }

@@ -10,6 +10,10 @@ const SCHEMA_VERSION = 1;
 const FINGERPRINT = /^[a-f0-9]{64}$/;
 
 export function fingerprintFamily(family, repoRoot) {
+  return hash(JSON.stringify(memberHashesForFamily(family, repoRoot)));
+}
+
+export function memberHashesForFamily(family, repoRoot) {
   if (!Array.isArray(family?.locations) || family.locations.length === 0) {
     throw new Error("Family must contain source locations.");
   }
@@ -27,16 +31,56 @@ export function fingerprintFamily(family, repoRoot) {
       .map((line) => line.trimEnd()).join("\n");
     return hash(content);
   });
-  return hash(JSON.stringify(members.sort()));
+  return members.sort();
 }
 
-export function filterReviewed(families, baseline, version) {
+export function filterReviewed(families, baseline, version, currentFamilies = families) {
   if (!validBaseline(baseline) || baseline.noseVersion !== version) return families;
   const reviewed = new Set([
     ...baseline.accepted,
     ...baseline.intentional.map((entry) => entry.fingerprint),
   ]);
-  return families.filter((family) => !reviewed.has(family.fingerprint));
+  for (const reduction of reviewedReductions(families, baseline, version, currentFamilies)) {
+    reviewed.add(reduction.fingerprint);
+  }
+  return families.filter((family) => !reviewed.has(family.fingerprint)
+    || (family.memberHashes !== undefined && !validMembership(family)));
+}
+
+export function reviewedReductions(families, baseline, version, currentFamilies = families) {
+  if (!validBaseline(baseline) || baseline.noseVersion !== version) return [];
+  const present = new Set(currentFamilies.map((family) => family.fingerprint));
+  const exact = new Set([...baseline.accepted, ...baseline.intentional.map((entry) => entry.fingerprint)]);
+  const eligible = baseline.intentional.filter((entry) => entry.memberHashes && !present.has(entry.fingerprint));
+  return families.flatMap((family) => {
+    if (exact.has(family.fingerprint) || !validMembership(family)) return [];
+    const reviewed = eligible.find((entry) => strictSubmultiset(family.memberHashes, entry.memberHashes));
+    return reviewed ? [{
+      fingerprint: family.fingerprint,
+      reviewedFingerprint: reviewed.fingerprint,
+      previousMembers: reviewed.memberHashes.length,
+      currentMembers: family.memberHashes.length,
+      removedMembers: reviewed.memberHashes.length - family.memberHashes.length,
+    }] : [];
+  });
+}
+
+function strictSubmultiset(current, reviewed) {
+  if (current.length >= reviewed.length) return false;
+  const remaining = new Map();
+  for (const member of reviewed) remaining.set(member, (remaining.get(member) ?? 0) + 1);
+  for (const member of current) {
+    const count = remaining.get(member) ?? 0;
+    if (count === 0) return false;
+    remaining.set(member, count - 1);
+  }
+  return true;
+}
+
+function validMembership(entry) {
+  return Array.isArray(entry.memberHashes) && entry.memberHashes.length > 0
+    && entry.memberHashes.every((member) => typeof member === "string" && FINGERPRINT.test(member))
+    && hash(JSON.stringify([...entry.memberHashes].sort())) === entry.fingerprint;
 }
 
 function containedPath(root, file) {
@@ -53,14 +97,15 @@ function containedPath(root, file) {
   return actual;
 }
 
-function validBaseline(baseline) {
+export function validBaseline(baseline) {
   return baseline?.schemaVersion === SCHEMA_VERSION
     && typeof baseline.noseVersion === "string" && baseline.noseVersion.trim().length > 0
     && Array.isArray(baseline.accepted)
     && baseline.accepted.every((entry) => typeof entry === "string" && FINGERPRINT.test(entry))
     && Array.isArray(baseline.intentional)
-    && baseline.intentional.every((entry) => entry && FINGERPRINT.test(entry.fingerprint)
-      && typeof entry.reason === "string" && entry.reason.trim().length > 0);
+    && baseline.intentional.every((entry) => entry && typeof entry.fingerprint === "string" && FINGERPRINT.test(entry.fingerprint)
+      && typeof entry.reason === "string" && entry.reason.trim().length > 0
+      && (entry.memberHashes === undefined || validMembership(entry)));
 }
 
 export function hash(value) {
@@ -96,14 +141,16 @@ function main(args) {
     throw new Error("Installed Nose version differs from the report or is unavailable; scan again.");
   }
   const candidate = report.candidates.find((entry) => entry.fingerprint === fingerprint);
-  if (!candidate || fingerprintFamily(candidate, root) !== fingerprint) {
+  const memberHashes = candidate ? memberHashesForFamily(candidate, root) : [];
+  if (!candidate || hash(JSON.stringify(memberHashes)) !== fingerprint
+    || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
     throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
   }
   const updated = {
     ...baseline,
     intentional: [
       ...baseline.intentional.filter((entry) => entry.fingerprint !== fingerprint),
-      { fingerprint, reason: reason.trim() },
+      { fingerprint, reason: reason.trim(), memberHashes },
     ],
   };
   const temporary = join(dirname(baselinePath), `.baseline-${randomUUID()}.tmp`);

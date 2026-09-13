@@ -82,7 +82,7 @@ function main(input) {
     const policyPath=join(directory,'baseline.json');
     const policy=existsSync(policyPath)?JSON.parse(readFileSync(policyPath,'utf8')):null;
     if (policy && (policy.schemaVersion!==1 || policy.noseVersion!==current.noseVersion)) throw new Error('Review baseline schema or Nose version mismatch; update decisions explicitly');
-    const fresh=filterReviewed(current.families.filter(f=>!old.has(f.fingerprint)),policy,current.noseVersion);
+    const fresh=filterReviewed(current.families.filter(f=>!old.has(f.fingerprint)),policy,current.noseVersion,current.families);
     const candidates=selectChangedFamilies(fresh,changed);
     mkdirSync(directory,{recursive:true});
     atomicJson(join(directory,'report.json'),{schemaVersion:1,noseVersion:current.noseVersion,candidates});
