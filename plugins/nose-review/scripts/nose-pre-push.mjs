@@ -113,10 +113,10 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         return {noseVersion:result.noseVersion, families:result.families,
           candidates:policy.candidates, hasBaseline:policy.hasBaseline, directory};
       });
-      if (!local.hasBaseline && !zero.test(remoteSha)) {
+      if (!zero.test(remoteSha)) {
         const remote=archivedScan(root, remoteSha, directory => scan(directory));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
-        local.candidates=filterRemoteExisting(local.families,remote.families);
+        local.candidates=filterRemoteExisting(local.candidates,remote.families);
         record.comparisonBase={sha:remoteSha, familyCount:remote.families.length};
       }
       noseVersion = local.noseVersion;

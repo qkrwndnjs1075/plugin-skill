@@ -65,6 +65,21 @@ test('an existing remote family is a comparison baseline but new growth still bl
   assert.ok(f.report().candidates.some(family => family.locations.length === 3));
 });
 
+test('remote comparison also filters candidates not covered by a committed baseline', t => {
+  const f = fixture(t);
+  const first = f.run();
+  const baseline = {schemaVersion:1, noseVersion:f.report().noseVersion, accepted:[], intentional:[]};
+  writeFileSync(join(f.root, '.nose-review/baseline.json'), JSON.stringify(baseline));
+  f.git('add', '.nose-review/baseline.json'); f.git('commit', '-qm', 'empty reviewed baseline');
+
+  const compared = f.run(f.line(f.git('rev-parse', 'HEAD'), f.sha));
+
+  assert.equal(first.status, 1, first.stderr);
+  assert.equal(compared.status, 0, compared.stderr);
+  assert.equal(f.report().refs[0].comparisonBase.sha, f.sha);
+  assert.equal(f.report().candidates.length, 0);
+});
+
 test('no refs and deleted refs do not scan or create a report', t => {
   const f = fixture(t);
   assert.equal(f.run('').status, 0);

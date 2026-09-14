@@ -32,10 +32,10 @@ checking out branches or changing the index or working tree.
 
 Reviewed fingerprints and intentional decisions in the **pushed**
 `.nose-review/baseline.json` remain the durable source of review decisions. When
-that file is absent and the pushed ref already exists, the hook scans the remote
-tip as a comparison base: unchanged families and strict member reductions pass,
-while new families, growth, and edited membership block. This comparison does
-not record or imply review, and it never writes a baseline.
+the pushed ref already exists, the hook also scans the remote tip as a comparison
+base after applying those decisions: unchanged families and strict member
+reductions pass, while new families, growth, and edited membership block. This
+comparison does not record or imply review, and it never writes a baseline.
 Content fingerprints exclude file paths, line offsets and trailing whitespace.
 Uncommitted decisions do not affect a push check.
 
