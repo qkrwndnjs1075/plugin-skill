@@ -30,6 +30,63 @@
         "752c72b5393be17e5625d508bd50cd899d55ed3fe48af7cd7af51188e3a8c1f2",
         "e061ba9137f3c653e1fc3b909491868e94b3c0890ecdd2a2e0151295aea59f2f"
       ]
+    },
+    {
+      "fingerprint": "cde4cfdaa7fba26ccdeb5de954889d07d28c091b19e6e12c6441aeaa4bf702b7",
+      "reason": "Separate Node test entrypoints own independent suites and must each import the standard test, assertion, filesystem, OS, and path modules; a shared bootstrap would couple their execution boundaries.",
+      "memberHashes": [
+        "23eb5948199931a782bcb388c27aa69e83ea85d261b549f365f2e00213f5bfbe",
+        "23eb5948199931a782bcb388c27aa69e83ea85d261b549f365f2e00213f5bfbe"
+      ]
+    },
+    {
+      "fingerprint": "091aff41f985bc4774e33535e1f792c3ca4130afcc88be210dbbcb1fb3c0fe1a",
+      "reason": "Independent log-index regression scenarios intentionally retain local arrange-act-assert flows so usage attribution and incomplete-line cursor invalidation can fail independently.",
+      "memberHashes": [
+        "8be9c8cd6eedfc41e8afa38e6bf70445994de28c27e00ce8165cdfd13c5d520a",
+        "8f8a87d300e9bda16c9322de99631d35ee7a0318d31cbd1298eb9803212eff5f"
+      ]
+    },
+    {
+      "fingerprint": "279aac1cd028428f8fd994afec6a7e23bd6f294c87a0146df10fc9a6e428c44c",
+      "reason": "Inventory exclusion and trash-restore lifecycle tests independently construct filesystem aliases because they verify different public contracts and must not share mutable scenario state.",
+      "memberHashes": [
+        "464f2686a0bd75fd7b35a53cbf41bd09d2e794d0757dcf3a47bc0db55f6f33a5",
+        "742aaf6551e757c6c367633649335de037291ae38ccc2e5dce011fc392d899e5"
+      ]
+    },
+    {
+      "fingerprint": "bf24a8d62e021b81a9628709c679fa35ac8c9d1cc95516323476de3f17413dbe",
+      "reason": "Persistence-finalization and rollback-filesystem tests intentionally mirror transaction assertions to distinguish a recoverable state-write failure from a fatal rollback failure that preserves both copies.",
+      "memberHashes": [
+        "e27293b93c091d6f2c0ca252e31c28443d18e7fe4e0ccd0bca458226cc115835",
+        "e39b407c8e67282c6679b0a6ed8be9ef3f49804c8a7818cb1361e94139e8924e"
+      ]
+    },
+    {
+      "fingerprint": "72e6911879db4bd2eafe86c3dcf9e00ba130105fabac41a5056c25b5ef5b4e14",
+      "reason": "The paired interrupted-transaction tests intentionally mirror fixture setup to prove the behavioral contrast: normal execution restores it while dry-run only reports it.",
+      "memberHashes": [
+        "a8b41e0975208a76a3332b601cf5e35be1c9d96e72365f4a52da2736f9a9846b",
+        "acab6a8bd22574f8d1fe8b24543956adc070962ae4610fa53847d492753d2d3b"
+      ]
+    },
+    {
+      "fingerprint": "08ae60f5cdfe21d1f01febccfad14c40c4912bacfe4ea62f6ecbe65d5443c67a",
+      "reason": "Scenario-local postValidate failures represent three distinct lifecycle boundaries; extracting one shared callback would hide which verification phase each regression exercises.",
+      "memberHashes": [
+        "85e8a1e0c824d989d79497490c757a076af5c98e20240c3d251fc798c7b451ea",
+        "a91a3d73f27ba746acf23c7a265d9db6fac5194df7e093cc6868ae65836da7f7",
+        "f3a354b9526a3820f47f22d55636b0ddf751a8fbbc8ccc0e20c3dc53534b2219"
+      ]
+    },
+    {
+      "fingerprint": "6b7f811f006e516f5cd99be9bbae1cbc630998c3c95c5c639b046cfaa57158f7",
+      "reason": "Scenario-local fault callbacks deliberately inject different transaction phases, persisting versus rollback-restore, and remain separate so the tested failure boundary is explicit.",
+      "memberHashes": [
+        "85e8a1e0c824d989d79497490c757a076af5c98e20240c3d251fc798c7b451ea",
+        "93bd9fb5213322030f4df42207565c98df6e71a7809ce8de05e3ecdb28cd47b7"
+      ]
     }
   ]
 }
