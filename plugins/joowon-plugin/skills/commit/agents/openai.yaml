@@ -1,0 +1,4 @@
+interface:
+  display_name: "Commit"
+  short_description: "변경을 기능과 도메인 안의 역할별로 나누어 커밋합니다"
+  default_prompt: "$commit 현재 요청한 변경을 기능과 도메인 안의 역할별로 나눠서 커밋해줘."

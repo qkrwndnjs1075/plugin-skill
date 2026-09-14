@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR"
+  short_description: "하나의 전달 목적을 PR로 묶고 설명과 검증 근거를 갖춥니다"
+  default_prompt: "$pr 현재 변경을 전달 목적에 맞게 PR로 작성해줘. 하나의 목적이면 한 PR로 묶고, 별도로 전달할 기능만 분리해줘. 책임별 커밋과 검증 근거는 유지해줘."

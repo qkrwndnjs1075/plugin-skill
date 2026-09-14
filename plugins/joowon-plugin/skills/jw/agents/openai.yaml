@@ -1,0 +1,6 @@
+interface:
+  display_name: "JW"
+  short_description: "Commit 또는 PR 워크플로를 선택합니다"
+  default_prompt: "$jw Git 작업을 진행해줘."
+policy:
+  allow_implicit_invocation: false

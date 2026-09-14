@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 const root=realpathSync(join(dirname(fileURLToPath(import.meta.url)),'..'));
 const readJson=path=>JSON.parse(readFileSync(path,'utf8'));
 
-test('repository marketplace exposes two isolated plugin packages',()=>{
+test('repository marketplace exposes isolated plugin packages',()=>{
   const marketplace=readJson(join(root,'.agents/plugins/marketplace.json'));
   assert.equal(marketplace.name,'plugin-skill');
-  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance']);
+  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin']);
   for(const plugin of marketplace.plugins) {
     const directory=resolve(root,plugin.source.path);
     assert.ok(directory.startsWith(join(root,'plugins')+'/'));
@@ -18,6 +18,18 @@ test('repository marketplace exposes two isolated plugin packages',()=>{
     assert.equal(manifest.name,plugin.name);
     assert.equal(plugin.source.source,'local');
   }
+});
+
+test('Joowon Plugin preserves the local Commit and PR skill packages and exposes JW',()=>{
+  for(const skill of ['commit','pr','jw']) {
+    const directory=join(root,'plugins/joowon-plugin/skills',skill);
+    assert.ok(existsSync(join(directory,'SKILL.md')));
+    assert.ok(existsSync(join(directory,'agents/openai.yaml')));
+  }
+  assert.ok(existsSync(join(root,'plugins/joowon-plugin/skills/pr/references/visual-evidence.md')));
+  const jw=readFileSync(join(root,'plugins/joowon-plugin/skills/jw/agents/openai.yaml'),'utf8');
+  assert.match(jw,/allow_implicit_invocation: false/);
+  assert.match(jw,/\$jw/);
 });
 
 test('Nose owns its hook while skill maintenance stays explicit-only',()=>{
