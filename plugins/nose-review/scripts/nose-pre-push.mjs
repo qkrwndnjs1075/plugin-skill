@@ -14,6 +14,14 @@ const zero = /^0+$/;
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const advise = message => process.stderr.write(`[nose pre-push] ${message}\n`);
 
+function remoteTrackingCommits(root, remoteName) {
+  const remotes=git(root,['remote']).trim().split('\n').filter(Boolean);
+  if(!remotes.includes(remoteName)) return [];
+  const commits=git(root,['for-each-ref','--format=%(objectname)',`refs/remotes/${remoteName}/`]).trim().split('\n').filter(Boolean);
+  if(commits.some(commit=>!shaPattern.test(commit))) throw new Error('Invalid remote-tracking commit');
+  return [...new Set(commits)];
+}
+
 function archivedScan(root, sha, operation, materializeSymlinks=false) {
   git(root, ['cat-file', '-e', `${sha}^{commit}`]);
   const directory = mkdtempSync(join(tmpdir(), 'nose-pre-push-'));
@@ -94,11 +102,20 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       if (zero.test(localSha)) { record.status = 'deleted'; advise(`${remoteRef}: deletion skipped`); continue; }
       // A removed credential can still leak through an earlier outgoing commit.
       const range=[localSha];
+      let outgoing, comparisonSha=zero.test(remoteSha)?null:remoteSha;
       if(!zero.test(remoteSha)) {
         const known=spawnSync('git',['cat-file','-e',`${remoteSha}^{commit}`],{cwd:root,timeout:10000});
         if(known.status===0) range.push('^'+remoteSha);
+      } else {
+        const knownRemoteCommits=remoteTrackingCommits(root,args[0]);
+        if(knownRemoteCommits.length) {
+          const history=git(root,['rev-list','--boundary',localSha,'--not',...knownRemoteCommits]).trim().split('\n').filter(Boolean);
+          if(history.some(commit=>!shaPattern.test(commit.startsWith('-')?commit.slice(1):commit))) throw new Error('Invalid remote history');
+          outgoing=history.filter(commit=>!commit.startsWith('-'));
+          comparisonSha=history.find(commit=>commit.startsWith('-'))?.slice(1) ?? (outgoing.length===0?localSha:null);
+        }
       }
-      const outgoing=git(root,['rev-list',...range]).trim().split('\n').filter(Boolean);
+      outgoing ??= git(root,['rev-list',...range]).trim().split('\n').filter(Boolean);
       record.secrets={status:'passed',findings:[],commitsScanned:0};
       for(const sha of new Set([...outgoing,localSha])) {
         const result=archivedScan(root,sha,scanSecrets,true);
@@ -113,11 +130,11 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         return {noseVersion:result.noseVersion, families:result.families,
           candidates:policy.candidates, hasBaseline:policy.hasBaseline, directory};
       });
-      if (!zero.test(remoteSha)) {
-        const remote=archivedScan(root, remoteSha, directory => scan(directory));
+      if (comparisonSha) {
+        const remote=archivedScan(root, comparisonSha, directory => scan(directory));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
         local.candidates=filterRemoteExisting(local.candidates,remote.families);
-        record.comparisonBase={sha:remoteSha, familyCount:remote.families.length};
+        record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};
       }
       noseVersion = local.noseVersion;
       record.candidates = relativeFamilies(local.candidates, local.directory);

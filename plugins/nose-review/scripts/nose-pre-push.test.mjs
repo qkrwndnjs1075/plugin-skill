@@ -51,6 +51,22 @@ test('a new branch blocks unreviewed duplicates independently of working files',
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
 });
 
+test('a new remote branch scans only new commits and compares against its remote boundary', t => {
+  const f = fixture(t);
+  f.git('remote', 'add', 'origin', '.');
+  f.git('update-ref', 'refs/remotes/origin/main', f.sha);
+  writeFileSync(join(f.root, 'unique.js'), 'export const unique = 1;\n');
+  f.git('add', 'unique.js'); f.git('commit', '-qm', 'feature commit');
+
+  const run = f.run(f.line(f.git('rev-parse', 'HEAD'), zero, 'feature'));
+
+  assert.equal(run.status, 0, run.stderr);
+  const report=f.report();
+  assert.equal(report.refs[0].secrets.commitsScanned, 1);
+  assert.equal(report.refs[0].comparisonBase.sha, f.sha);
+  assert.equal(report.candidates.length, 0);
+});
+
 test('an existing remote family is a comparison baseline but new growth still blocks', t => {
   const f = fixture(t);
   const unchanged = f.run(f.line(f.sha, f.sha));

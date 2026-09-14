@@ -50,7 +50,9 @@ behavior; re-record a current reviewed family to enable reduction recognition.
 Gitleaks also checks the pushed tip and every outgoing commit tree, so deleting a
 credential in a later commit does not hide its earlier occurrence. An unavailable
 remote commit conservatively scans the reachable local history. This can cost
-more on first pushes. Checks use Gitleaks built-in rules, without repository or
+more on first pushes. For a new branch on a known remote, commits already reachable
+from that remote's local tracking refs are excluded; when no tracking refs exist,
+the reachable history remains the conservative fallback. Checks use Gitleaks built-in rules, without repository or
 environment allowlists or inline suppression. Findings contain only rule, file,
 line and commit, never the credential value or source excerpt. This detects known
 secret patterns, not every possible secret, and does not inspect nested archives.
