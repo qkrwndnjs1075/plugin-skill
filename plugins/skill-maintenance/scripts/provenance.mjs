@@ -9,6 +9,7 @@ function command(binary, args, cwd) {
   if (result.error || result.status !== 0) throw new Error(`${binary} remote query unavailable`);
   return result.stdout.trim();
 }
+const removeTree = directory => fs.rmSync(directory, { recursive: true, force: true });
 export function semver(tag) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(tag);
   return match && { numbers: match.slice(1, 4).map(Number), prerelease: match[4] || '', channel: (match[4] || '').split('.')[0] };
@@ -143,8 +144,8 @@ export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommi
         const target = path.join(directory, relative); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, bytes.stdout, { mode: mode === '100755' ? 0o755 : 0o644 });
       }
       if (!fs.existsSync(path.join(directory, 'SKILL.md'))) throw new Error('Remote skill subtree missing');
-      return { path: directory, cleanup() { fs.rmSync(directory, { recursive: true, force: true }); } };
+      return { path: directory, cleanup() { removeTree(directory); } };
     },
-    close() { fs.rmSync(temporary, { recursive: true, force: true }); },
+    close() { removeTree(temporary); },
   };
 }

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 
 export const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 export const defaultRoots = () => [path.join(os.homedir(), '.codex/skills'), path.join(os.homedir(), '.agents/skills')];
+export const defaultStateRoot = name => path.join(os.homedir(), `.codex/${name}`);
 export const within = (root, target) => target === root || target.startsWith(root + path.sep);
 
 export function treeHash(directory) {

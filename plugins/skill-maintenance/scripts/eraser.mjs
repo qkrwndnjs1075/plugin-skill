@@ -3,10 +3,11 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { inventory, treeHash, within, defaultRoots } from './inventory.mjs';
+import { inventory, treeHash, within, defaultRoots, defaultStateRoot } from './inventory.mjs';
 import { indexLogs, logFiles, summarize } from './log-index.mjs';
+import { markdownInline, indentedJson } from './report-format.mjs';
 
-const defaultState = () => path.join(os.homedir(), '.codex/skill-eraser');
+const defaultState = defaultStateRoot('skill-eraser');
 function safeDir(dir) {
   const absolute = path.resolve(dir);
   let current = path.parse(absolute).root;
@@ -23,15 +24,13 @@ function save(file, value) {
   fs.renameSync(temporary,file);
 }
 function read(file,fallback) { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : fallback; }
-function markdownInline(value) { return String(value).replace(/[\r\n]+/g, ' ').replace(/([\\`*_{}\[\]()#+.!|<>])/g, '\\$1'); }
-function indentedJson(value) { return JSON.stringify(value, null, 2).split('\n').map(line => `    ${line}`).join('\n'); }
 function lock(stateRoot, fn) {
   safeDir(stateRoot);
   const file = path.join(stateRoot,'operation.lock');
   const fd = fs.openSync(file,'wx',0o600);
   try { return fn(); } finally { fs.closeSync(fd); fs.unlinkSync(file); }
 }
-export async function analyze({ roots = defaultRoots(), stateRoot = defaultState(), logsRoot, logsRoots = logsRoot ? [logsRoot] : [path.join(os.homedir(),'.codex/sessions'), path.join(os.homedir(),'.codex/archived_sessions')], now = new Date(), sources = read(path.join(os.homedir(),'.codex/skill-updater/sources.json'),{}) } = {}) {
+export async function analyze({ roots = defaultRoots(), stateRoot = defaultState, logsRoot, logsRoots = logsRoot ? [logsRoot] : [path.join(os.homedir(),'.codex/sessions'), path.join(os.homedir(),'.codex/archived_sessions')], now = new Date(), sources = read(path.join(os.homedir(),'.codex/skill-updater/sources.json'),{}) } = {}) {
   safeDir(stateRoot);
   const lockPath = path.join(stateRoot,'operation.lock'), fd = fs.openSync(lockPath,'wx',0o600);
   try {
@@ -49,7 +48,7 @@ export async function analyze({ roots = defaultRoots(), stateRoot = defaultState
   } finally { fs.closeSync(fd); fs.unlinkSync(lockPath); }
 }
 
-export function trash({ roots = defaultRoots(), stateRoot = defaultState(), skillId, expectedHash } = {}) {
+export function trash({ roots = defaultRoots(), stateRoot = defaultState, skillId, expectedHash } = {}) {
   if (!skillId || !expectedHash) throw new Error('Exact approved skill ID and expected hash are required');
   return lock(stateRoot,()=> {
     const inv = inventory({roots}), skill = inv.skills.find(s=>s.id===skillId);
@@ -76,7 +75,7 @@ export function trash({ roots = defaultRoots(), stateRoot = defaultState(), skil
   });
 }
 
-export function restore({stateRoot=defaultState(),transaction}={}) {
+export function restore({stateRoot=defaultState,transaction}={}) {
   if (!/^[\w-]+$/.test(transaction || '')) throw new Error('Exact transaction ID required');
   return lock(stateRoot,()=> {
     const file=path.join(stateRoot,'trash',transaction,'manifest.json'), m=read(file,null);
@@ -97,7 +96,7 @@ export function restore({stateRoot=defaultState(),transaction}={}) {
   });
 }
 
-export function listTrash({ stateRoot = defaultState() } = {}) {
+export function listTrash({ stateRoot = defaultState } = {}) {
   const directory = path.join(stateRoot, 'trash');
   if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory).sort().flatMap(id => {

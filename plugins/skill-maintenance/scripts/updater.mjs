@@ -3,12 +3,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { inventory, treeHash } from './inventory.mjs';
+import { inventory, treeHash, defaultStateRoot } from './inventory.mjs';
 import { atomicJson, readSources, writeSources } from './update-state.mjs';
 import { createGitHubAdapter, recoverSource, selectTarget, discoverOrigins } from './provenance.mjs';
+import { markdownInline, indentedJson } from './report-format.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const defaultState = () => path.join(os.homedir(), '.codex/skill-updater');
+const defaultState = defaultStateRoot('skill-updater');
 function files(directory, prefix = '', result = {}) {
   for (const name of fs.readdirSync(path.join(directory, prefix)).sort()) {
     if (name === '.git') continue;
@@ -156,12 +157,10 @@ export function applyCandidate({ stateDir, state, skill, source, candidate, targ
 function writeReport(stateDir, rows) {
   const report = path.join(stateDir, 'reports', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID().slice(0, 8)}.md`);
   fs.mkdirSync(path.dirname(report), { recursive: true });
-  const safe = text => String(text).replace(/[\r\n]+/g, ' ').replace(/([\\`*_{}\[\]()#+.!|<>])/g, '\\$1');
-  const json = value => JSON.stringify(value, null, 2).split('\n').map(line => `    ${line}`).join('\n');
-  fs.writeFileSync(report, `# Skill updater\n\n${rows.map(row => `## ${safe(row.name)}: ${safe(row.status)}\n\n${safe(row.reason || '')}\n\n${json(row)}`).join('\n\n')}\n`, { mode: 0o600 });
+  fs.writeFileSync(report, `# Skill updater\n\n${rows.map(row => `## ${markdownInline(row.name)}: ${markdownInline(row.status)}\n\n${markdownInline(row.reason || '')}\n\n${indentedJson(row)}`).join('\n\n')}\n`, { mode: 0o600 });
   return { summary: rows.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {}), items: rows, report };
 }
-export async function runUpdater({ roots, excludedRoots, configPaths = [path.join(os.homedir(), '.codex/config.toml'), path.join(os.homedir(), '.codex/AGENTS.md'), path.join(os.homedir(), '.agents/AGENTS.md')], stateDir = defaultState(), adapter, candidates, dryRun = false, token, postValidate, fault } = {}) {
+export async function runUpdater({ roots, excludedRoots, configPaths = [path.join(os.homedir(), '.codex/config.toml'), path.join(os.homedir(), '.codex/AGENTS.md'), path.join(os.homedir(), '.agents/AGENTS.md')], stateDir = defaultState, adapter, candidates, dryRun = false, token, postValidate, fault } = {}) {
   const remote = adapter || createGitHubAdapter();
   try {
     return await withLock(stateDir, async () => {
@@ -217,7 +216,7 @@ export async function runUpdater({ roots, excludedRoots, configPaths = [path.joi
   } finally { if (!adapter) remote.close(); }
 }
 
-export async function confirmSource({ roots, excludedRoots, stateDir = defaultState(), adapter, selection }) {
+export async function confirmSource({ roots, excludedRoots, stateDir = defaultState, adapter, selection }) {
   const remote = adapter || createGitHubAdapter();
   try {
     return await withLock(stateDir, async () => {
@@ -243,7 +242,7 @@ export async function confirmSource({ roots, excludedRoots, stateDir = defaultSt
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2), mode = args.shift() || 'run';
   const value = key => { const index = args.indexOf(key); return index < 0 ? undefined : args[index + 1]; };
-  const stateDir = value('--state-dir') || defaultState();
+  const stateDir = value('--state-dir') || defaultState;
   try {
     if (!['run', 'apply-impact', 'recover', 'confirm-source'].includes(mode)) throw new Error('Use run, apply-impact --token TOKEN, confirm-source --selection FILE, or recover');
     if (mode === 'apply-impact' && !value('--token')) throw new Error('Explicit impact confirmation token required');
