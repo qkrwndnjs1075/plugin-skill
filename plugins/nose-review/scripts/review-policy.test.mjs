@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
+import { filterRemoteExisting, filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
 import { scan } from "./review-runtime.mjs";
 
 function fixture(t) {
@@ -121,6 +121,20 @@ test("growth, replacement, and content edits remain findings", () => {
   const findings = [memberFamily("a", "a", "a", "b"), memberFamily("a", "b", "b"), memberFamily("a", "changed")];
   assert.deepEqual(filterReviewed(findings, baseline, baseline.noseVersion), findings);
   assert.deepEqual(reviewedReductions(findings, baseline, baseline.noseVersion), []);
+});
+
+test("remote comparison permits existing families and reductions but blocks growth and edits", () => {
+  const existing = memberFamily("a", "a", "b");
+  const reduced = memberFamily("a", "b");
+  const grown = memberFamily("a", "a", "a", "b");
+  const edited = memberFamily("a", "changed");
+  assert.deepEqual(filterRemoteExisting([existing, reduced, grown, edited], [existing]), [grown, edited]);
+});
+
+test("remote comparison fails closed on unverifiable membership", () => {
+  const existing = memberFamily("a", "b");
+  assert.deepEqual(filterRemoteExisting([{ ...existing, memberHashes: undefined }], [existing]), [{ ...existing, memberHashes: undefined }]);
+  assert.deepEqual(filterRemoteExisting([existing], [{ ...existing, memberHashes: [hash("forged")] }]), [existing]);
 });
 
 test("legacy reviews, incompatible versions, and missing policy remain exact-only or unreviewed", () => {

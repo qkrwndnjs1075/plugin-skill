@@ -36,7 +36,7 @@ function fixture(t) {
   return {root, git, sha, line, run, report, push};
 }
 
-test('unreviewed pushed duplicates block even if already on remote or removed from working files', t => {
+test('a new branch blocks unreviewed duplicates independently of working files', t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'a.js'), 'export const a = 1;\n');
   writeFileSync(join(f.root, 'b.js'), 'export const b = 2;\n');
@@ -48,11 +48,21 @@ test('unreviewed pushed duplicates block even if already on remote or removed fr
   assert.ok(report.candidates.length > 0, first.stderr);
   assert.equal(report.refs[0].localSha, f.sha);
   assert.ok(report.candidates.every(family => family.locations.every(location => !location.file.startsWith('/'))));
-  const next = f.run(f.line(f.sha, f.sha));
-  assert.equal(next.status, 1, next.stderr);
-  assert.equal(f.report().refs[0].status, 'blocked');
-  assert.ok(f.report().candidates.length > 0);
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
+});
+
+test('an existing remote family is a comparison baseline but new growth still blocks', t => {
+  const f = fixture(t);
+  const unchanged = f.run(f.line(f.sha, f.sha));
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.equal(f.report().refs[0].comparisonBase.sha, f.sha);
+  assert.equal(f.report().candidates.length, 0);
+
+  writeFileSync(join(f.root, 'c.js'), source('gamma'));
+  f.git('add', 'c.js'); f.git('commit', '-qm', 'grow duplicate family');
+  const grown = f.run(f.line(f.git('rev-parse', 'HEAD'), f.sha));
+  assert.equal(grown.status, 1, grown.stderr);
+  assert.ok(f.report().candidates.some(family => family.locations.length === 3));
 });
 
 test('no refs and deleted refs do not scan or create a report', t => {
@@ -65,14 +75,15 @@ test('no refs and deleted refs do not scan or create a report', t => {
   assert.throws(f.report, /ENOENT/);
 });
 
-test('all refs are checked against reviewed baselines without remote-object access', t => {
+test('an unavailable remote comparison object fails closed', t => {
   const f = fixture(t);
   const run = f.run(f.line() + f.line(f.sha, 'f'.repeat(40), 'other'));
-  assert.equal(run.status, 1);
+  assert.equal(run.status, 2);
   const report = f.report();
   assert.equal(report.refs.length, 2);
-  assert.ok(report.refs.every(ref => ref.candidates.length > 0));
-  assert.ok(report.refs.every(ref=>ref.status==='blocked'));
+  assert.equal(report.refs[0].status, 'blocked');
+  assert.equal(report.refs[1].status, 'error');
+  assert.match(report.refs[1].warnings.join('\n'), /Scan unavailable/);
 });
 
 test('missing Nose blocks with an error record', t => {

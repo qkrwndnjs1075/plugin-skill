@@ -65,6 +65,14 @@ export function reviewedReductions(families, baseline, version, currentFamilies 
   });
 }
 
+export function filterRemoteExisting(families, remoteFamilies) {
+  const verifiableRemote = remoteFamilies.filter(validMembership);
+  const exact = new Set(verifiableRemote.map((family) => family.fingerprint));
+  return families.filter((family) => !validMembership(family)
+    || (!exact.has(family.fingerprint)
+      && !verifiableRemote.some((remote) => strictSubmultiset(family.memberHashes, remote.memberHashes))));
+}
+
 function strictSubmultiset(current, reviewed) {
   if (current.length >= reviewed.length) return false;
   const remaining = new Map();

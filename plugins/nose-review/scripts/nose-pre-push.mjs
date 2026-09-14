@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git, projectRoot, scan } from './review-runtime.mjs';
-import { filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
+import { filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { saveFailure } from './failure-history.mjs';
 
@@ -52,11 +52,11 @@ function archivedScan(root, sha, operation, materializeSymlinks=false) {
 
 function baselineCandidates(directory, result, warnings, reductions) {
   const review = lstatSync(join(directory, '.nose-review'), {throwIfNoEntry:false});
-  if (!review) return result.families;
-  if (!review.isDirectory()) { warnings.push('Pushed baseline directory is unsafe; baseline ignored'); return result.families; }
+  if (!review) return {candidates:result.families, hasBaseline:false};
+  if (!review.isDirectory()) { warnings.push('Pushed baseline directory is unsafe; baseline ignored'); return {candidates:result.families, hasBaseline:true}; }
   const path = join(directory, '.nose-review', 'baseline.json');
   const stat = lstatSync(path, {throwIfNoEntry:false});
-  if (!stat) return result.families;
+  if (!stat) return {candidates:result.families, hasBaseline:false};
   try {
     if (!stat.isFile()) throw new Error('Baseline must be a regular file');
     const baseline = JSON.parse(readFileSync(path, 'utf8'));
@@ -64,10 +64,10 @@ function baselineCandidates(directory, result, warnings, reductions) {
       throw new Error('Unsupported baseline schema or Nose version');
     }
     reductions.push(...reviewedReductions(result.families,baseline,result.noseVersion));
-    return filterReviewed(result.families, baseline, result.noseVersion);
+    return {candidates:filterReviewed(result.families, baseline, result.noseVersion), hasBaseline:true};
   } catch (error) {
     warnings.push(`${error instanceof SyntaxError?'Invalid baseline JSON':error.message}; pushed baseline ignored`);
-    return result.families;
+    return {candidates:result.families, hasBaseline:true};
   }
 }
 
@@ -109,12 +109,18 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       }
       const local = archivedScan(root, localSha, directory => {
         const result=scan(directory);
-        return {noseVersion:result.noseVersion,
-          candidates:relativeFamilies(baselineCandidates(directory, result, record.warnings, record.reductions), directory)};
+        const policy=baselineCandidates(directory, result, record.warnings, record.reductions);
+        return {noseVersion:result.noseVersion, families:result.families,
+          candidates:policy.candidates, hasBaseline:policy.hasBaseline, directory};
       });
+      if (!local.hasBaseline && !zero.test(remoteSha)) {
+        const remote=archivedScan(root, remoteSha, directory => scan(directory));
+        if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
+        local.candidates=filterRemoteExisting(local.families,remote.families);
+        record.comparisonBase={sha:remoteSha, familyCount:remote.families.length};
+      }
       noseVersion = local.noseVersion;
-      record.candidates = local.candidates;
-      // Remote presence is not a reviewed acceptance decision.
+      record.candidates = relativeFamilies(local.candidates, local.directory);
       record.status = record.warnings.length || record.secrets.status==='unavailable' ? 'error' : record.candidates.length || record.secrets.status==='blocked' ? 'blocked' : 'scanned';
       if(record.secrets.status==='unavailable') record.warnings.push(record.secrets.reason);
       for(const reduction of record.reductions) advise(`ADVISORY reduction: ${reduction.reviewedFingerprint} -> ${reduction.fingerprint}`);
