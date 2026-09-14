@@ -108,9 +108,13 @@ export function scan(root) {
     if (result.status!==0) throw new Error('Nose scan failed or exceeded 45 seconds');
     const report = JSON.parse(result.stdout);
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
-    const families = report.families.map(family=>{
-      const memberHashes=memberHashesForFamily(family,root);
-      return {...family,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))};
+    const families = report.families.flatMap(family=>{
+      if (!Array.isArray(family?.locations)) throw new Error('Family must contain source locations.');
+      const locations=family.locations.filter(location=>location?.region !== null);
+      if (locations.length !== family.locations.length && locations.length < 2) return [];
+      const candidate=locations.length === family.locations.length ? family : {...family,locations};
+      const memberHashes=memberHashesForFamily(candidate,root);
+      return [{...candidate,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))}];
     });
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root))) throw new Error('Code changed during scan; review deferred');
     return {noseVersion:version.stdout.trim(),families,files:before};

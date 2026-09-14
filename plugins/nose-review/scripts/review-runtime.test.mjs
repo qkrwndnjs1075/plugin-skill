@@ -48,3 +48,22 @@ test('scan discards a result when source changes during Nose execution', t=>{
   try { assert.throws(()=>scan(repo),/Code changed during scan/); }
   finally { process.env.PATH=previous; }
 });
+
+test('scan ignores an ungrounded Nose location whose span exceeds its file', t=>{
+  const fixture=mkdtempSync(join(tmpdir(),'nose-invalid-span-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const repo=join(fixture,'repo'),bin=join(fixture,'bin');
+  mkdirSync(repo);mkdirSync(bin);execFileSync('git',['init','-q'],{cwd:repo});
+  writeFileSync(join(repo,'long.py'),Array.from({length:304},(_,i)=>`long_${i}`).join('\n')+'\n');
+  writeFileSync(join(repo,'short.py'),Array.from({length:174},(_,i)=>`short_${i}`).join('\n')+'\n');
+  execFileSync('git',['add','.'],{cwd:repo});
+  const family={id:'invalid-span',locations:[
+    {file:'long.py',start:3,end:234,region:{start_byte:14,end_byte:1980}},
+    {file:'short.py',start:3,end:234,region:null,region_key:null},
+  ]};
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+
+    `if(process.argv.includes('--version')) console.log('nose fixture'); else console.log(${JSON.stringify(JSON.stringify({families:[family]}))});\n`,{mode:0o700});
+  const previous=process.env.PATH;process.env.PATH=bin+':'+previous;
+  try { assert.deepEqual(scan(repo).families,[]); }
+  finally { process.env.PATH=previous; }
+});
