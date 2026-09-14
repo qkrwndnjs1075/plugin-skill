@@ -44,7 +44,9 @@ export async function analyze({ roots = defaultRoots(), stateRoot = defaultState
     safeDir(path.dirname(report));
     const rows = evidence.skills.map(s=>`## ${markdownInline(s.name)}\n\nIdentity: ${markdownInline(s.id)}\n\nContent hash: ${markdownInline(s.contentHash)}\n\nObserved facts:\n\n${indentedJson(s.versions)}\n\nJudgment: pending AI assessment. No fixed usage threshold applies.\n\nReason and confidence: pending.\n`);
     fs.writeFileSync(report,`# Skill eraser evidence\n\nPeriod: ${index.coverage.from} to ${index.coverage.to}\n\nLogs: ${index.coverage.scannedLogs}; unparsed records: ${index.coverage.unparsedRecords}; excluded plugin/system entries: ${inv.excluded.length}; inventory errors: ${inv.errors.length}.\n\nNo observed use does not prove non-use. Historical events with unknown version must not be charged to the current version.\n\n${rows.join('\n')}\n`,{mode:0o600,flag:'wx'});
-    return {...evidence,report};
+    const evidenceFile = report.replace(/\.md$/, '.evidence.json');
+    save(evidenceFile, { schemaVersion: 1, report, coverage: evidence.coverage, unassigned: evidence.unassigned, inventoryErrorCount: inv.errors.length, skills: evidence.skills.map(({ id, name, contentHash, versions, observation }) => ({ id, name, contentHash, versions, observation })) });
+    return {...evidence,report,evidenceFile};
   } finally { fs.closeSync(fd); fs.unlinkSync(lockPath); }
 }
 

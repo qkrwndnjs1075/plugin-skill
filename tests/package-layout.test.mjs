@@ -30,4 +30,6 @@ test('Nose owns its hook while skill maintenance stays explicit-only',()=>{
     assert.match(openai,/allow_implicit_invocation: false/);
     assert.match(openai,new RegExp('\\$'+skill));
   }
+  assert.ok(existsSync(join(root,'plugins/skill-maintenance/scripts/judge.mjs')));
+  assert.ok(existsSync(join(root,'plugins/skill-maintenance/scripts/judgment.schema.json')));
 });

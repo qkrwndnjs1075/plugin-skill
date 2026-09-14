@@ -4,7 +4,7 @@ Two explicit-only Codex skills for user-managed skills under `~/.codex/skills` a
 
 ## Skill Eraser
 
-`$skill-eraser` incrementally indexes the last 90 days of local Codex sessions. It counts explicit use and evidenced automatic use, separates version identities, records clear errors/interruption and attributable rework/rollback, then asks the model to make evidence-backed recommendations. It never moves a skill during analysis. After explicit approval, selected skills move to recoverable local trash with a transaction manifest.
+`$skill-eraser` incrementally indexes the last 90 days of local Codex sessions. It counts explicit use and evidenced automatic use, separates version identities, and records clear errors/interruption plus attributable rework/rollback without a model. A separate ephemeral `gpt-5.6-luna` process with `high` reasoning receives a strictly reconstructed compact prompt and makes the recommendations. The child runs read-only from an empty directory and is instructed not to use tools; this is not an operating-system tool-free isolation boundary. Analysis never moves a skill. After explicit approval, selected skills move to recoverable local trash with a transaction manifest.
 
 ## Skill Updater
 

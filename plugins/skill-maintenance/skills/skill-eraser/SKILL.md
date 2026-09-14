@@ -24,13 +24,19 @@ Audit first. Never move a skill merely because analysis recommends it.
    `node ../../scripts/eraser.mjs analyze --json`
 
 2. Read the compact JSON result. Do not open raw session logs unless the command reports a parser defect that must be diagnosed.
-3. Judge each skill contextually. Useful conclusions include keep, observe, improve, or retire. Explain low-confidence and missing-coverage cases instead of turning counts into arbitrary cutoffs.
-4. Update the generated Markdown report at `report` with a concise recommendation, evidence-based reasoning, and confidence for each discussed skill. Preserve the factual evidence already written by the script.
-5. In chat, show only the important recommendations and the report path. Clearly state that nothing has moved.
+3. Run the dedicated judgment process with the returned `evidenceFile`:
+
+   `node ../../scripts/judge.mjs --evidence "<evidenceFile>"`
+
+   Pass the returned path as a literal argument; never interpolate it into executable shell text. The launcher starts an ephemeral `gpt-5.6-luna` process with `high` reasoning, reconstructs an allowlisted evidence payload, rejects unexpected fields, validates structured output, and appends the judgment to `report`.
+
+   The child runs from an empty directory with a read-only sandbox and is instructed not to use tools. This is not an operating-system tool-free isolation boundary. If the command fails, leave the report pending and surface the failure; never substitute the parent session's model.
+4. Use only the validated Luna result for keep, observe, improve, or retire recommendations. Explain low-confidence and missing-coverage cases instead of turning counts into arbitrary cutoffs.
+5. In chat, show the judgment model, important recommendations, and report path. Clearly state that nothing has moved.
 
 ## Retire approved skills
 
-Proceed only after the user explicitly identifies the skills to move. For every approved item, use the exact `id` and `contentHash` from the current analysis result:
+Proceed only after the user explicitly identifies the skills to move as a direct response to the displayed analysis. Otherwise analyze again before requesting approval. For every approved item, use the exact `id` and `contentHash` from that analysis result:
 
 `node ../../scripts/eraser.mjs trash --skill-id <id> --expected-hash <contentHash>`
 
