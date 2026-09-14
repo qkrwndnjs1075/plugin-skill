@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -23,6 +23,10 @@ test('installation chains existing hook with identical args/stdin and survives r
   writeFileSync(join(f.hooks,'pre-push'),old,{mode:0o755});
   const first=install(f.repo,f.source);
   assert.equal(first.status,'installed');
+  const release=readdirSync(join(f.hooks,'.nose-review')).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
+  const dispatcher=readFileSync(join(f.hooks,'.nose-review',release,'dispatch.mjs'),'utf8');
+  assert.match(dispatcher,/timeout:240000/);
+  assert.match(dispatcher,/exceeded 240 seconds/);
   const before=statSync(first.hook);
   assert.equal(install(f.repo,f.source).status,'current');
   assert.equal(statSync(first.hook).mtimeMs,before.mtimeMs);

@@ -152,7 +152,8 @@ output. Acceptance rejects stale source spans or incompatible Nose versions.
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
 - Nose and Gitleaks each have a 45-second limit per scan; the dispatcher bounds the complete
-  invocation to 180 seconds. A failure/timeout blocks and is reported.
+  invocation to 240 seconds so an existing-ref push can include both local and remote Nose
+  snapshots. A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

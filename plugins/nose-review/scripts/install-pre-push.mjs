@@ -62,10 +62,10 @@ if(existsSync(original) && (statSync(original).mode & 0o111)) {
  const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});
  if(result.error || result.status!==0) process.exit(result.status || 1);
 }
-const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','inherit'],timeout:180000});
+const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','inherit'],timeout:240000});
 if(check.error || check.signal) {
  console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete');
- try { console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed or exceeded 180 seconds'})); }
+ try { console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed or exceeded 240 seconds'})); }
  catch { console.error('Failure history could not be saved'); }
  process.exit(2);
 }
