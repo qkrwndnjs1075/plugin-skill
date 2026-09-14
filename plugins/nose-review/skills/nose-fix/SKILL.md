@@ -33,7 +33,10 @@ explicit history-rewrite approval; already exposed credentials need owner rotati
 
 Pre-push reports may describe committed snapshots rather than current working
 files. Read their per-ref SHAs and warnings; an empty failed report is not proof
-of no duplication. Refresh before acting. If the user explicitly requests a
+of no duplication. A `comparisonBase` means the hook used the existing remote
+tip only to remove unchanged families and strict reductions from the candidate
+set. It is not a review decision and must not be copied into `baseline.json`.
+Refresh before acting. If the user explicitly requests a
 full-project cleanup, use the refreshed project-wide candidates even if an older
 report exists, processing them in bounded batches.
 

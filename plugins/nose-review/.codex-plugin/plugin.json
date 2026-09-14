@@ -1,6 +1,6 @@
 {
   "name": "nose-review",
-  "version": "0.6.0",
+  "version": "0.6.0+codex.20260914025758",
   "description": "Review pushed code for duplication and resolve findings with Nose Fix",
   "author": {
     "name": "qkrwndnjs1075"

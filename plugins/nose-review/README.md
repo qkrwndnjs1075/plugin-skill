@@ -30,8 +30,12 @@ arguments and standard input. Its nonzero exit still rejects the push. If it
 passes, Nose inspects each pushed local commit in a temporary snapshot, without
 checking out branches or changing the index or working tree.
 
-Only reviewed fingerprints and intentional decisions in the **pushed**
-`.nose-review/baseline.json` exempt findings. Remote presence alone is not review.
+Reviewed fingerprints and intentional decisions in the **pushed**
+`.nose-review/baseline.json` remain the durable source of review decisions. When
+that file is absent and the pushed ref already exists, the hook scans the remote
+tip as a comparison base: unchanged families and strict member reductions pass,
+while new families, growth, and edited membership block. This comparison does
+not record or imply review, and it never writes a baseline.
 Content fingerprints exclude file paths, line offsets and trailing whitespace.
 Uncommitted decisions do not affect a push check.
 
@@ -51,15 +55,18 @@ environment allowlists or inline suppression. Findings contain only rule, file,
 line and commit, never the credential value or source excerpt. This detects known
 secret patterns, not every possible secret, and does not inspect nested archives.
 
-On every push, all unreviewed families in the pushed snapshot block delivery;
-nothing is silently accepted as an initial
-baseline. To establish reviewed exceptions, use `$nose-fix` and commit its
-justified decisions. The supported baseline schema also permits a reviewed
-`accepted` fingerprint list; the installer never seeds that list automatically.
+On a new remote ref with no committed baseline, all unreviewed families in the
+pushed snapshot block delivery. On an existing ref, only duplication introduced,
+grown, or changed since its remote tip blocks when no baseline exists. To
+establish durable reviewed exceptions, use `$nose-fix` and commit its justified
+decisions. The supported baseline schema also permits a reviewed `accepted`
+fingerprint list; the installer never seeds that list automatically.
 
 Results appear in the push output and `.nose-review/report.json`. The report
-includes per-ref commit IDs, findings, and scan warnings. Exit 1 means unreviewed
-duplication (`NOSE_DUPLICATION_BLOCKED`); exit 2 means the check could not complete
+includes per-ref commit IDs, the remote comparison SHA when used, findings, and
+scan warnings. An unavailable or incompatible remote comparison fails closed.
+Exit 1 means unreviewed duplication (`NOSE_DUPLICATION_BLOCKED`); exit 2 means
+the check could not complete
 (`NOSE_CHECK_UNAVAILABLE`), including invalid baselines or missing tools. Both
 reject the push. Ref deletion needs no scan. Submodule/archive limitations also
 block as unavailable rather than silently claiming coverage.
@@ -158,7 +165,8 @@ node --test scripts/*.test.mjs
 ```
 
 Coverage includes pushed-commit scans independent of dirty working files,
-committed reviewed baselines, missing tools, Git and plain-folder manual workflows,
+remote-tip comparison without a baseline, committed reviewed baselines, missing
+tools, Git and plain-folder manual workflows,
 original hook argument/stdin/exit preservation, repeat installation and updates,
 and real local pushes rejected then accepted after committed fixes or intentional
 decisions. Automated tests validate the gate, not model judgment quality.
