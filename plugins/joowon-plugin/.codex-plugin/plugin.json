@@ -1,6 +1,6 @@
 {
   "name": "joowon-plugin",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260914032922",
   "description": "Create responsibility-scoped commits and coherent pull requests",
   "author": {
     "name": "qkrwndnjs1075"
@@ -13,6 +13,6 @@
     "developerName": "qkrwndnjs1075",
     "category": "Productivity",
     "capabilities": [],
-    "defaultPrompt": "$jw Git 작업을 진행해줘."
+    "defaultPrompt": "$commit \ud604\uc7ac \uc694\uccad\ud55c \ubcc0\uacbd\uc744 \uae30\ub2a5\uacfc \ub3c4\uba54\uc778 \uc548\uc758 \uc5ed\ud560\ubcc4\ub85c \ub098\ub220\uc11c \ucee4\ubc0b\ud574\uc918."
   }
 }

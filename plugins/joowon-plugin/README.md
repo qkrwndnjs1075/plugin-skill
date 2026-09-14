@@ -2,8 +2,6 @@
 
 Two Codex skills for delivering Git changes clearly.
 
-Use `$jw` as the explicit entry point to choose Commit or PR work.
-
 ## Commit
 
 `$commit` separates requested work into responsibility-scoped local commits while preserving unrelated changes.
