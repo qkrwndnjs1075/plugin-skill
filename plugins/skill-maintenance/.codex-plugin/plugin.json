@@ -1,0 +1,18 @@
+{
+  "name": "skill-maintenance",
+  "version": "0.1.0",
+  "description": "Audit personal skill usage and safely update or retire skills",
+  "author": {
+    "name": "qkrwndnjs1075"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Skill Maintenance",
+    "shortDescription": "Safely update and retire personal Codex skills.",
+    "longDescription": "Provides explicit Skill Eraser and Skill Updater workflows backed by local usage evidence, source provenance, conflict detection, validation, recoverable moves, and rollback.",
+    "developerName": "qkrwndnjs1075",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use $skill-eraser to audit my personal Codex skills."
+  }
+}

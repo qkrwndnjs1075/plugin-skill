@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skill Updater"
+  short_description: "Safely update personal skills from proven sources."
+  default_prompt: "Use $skill-updater to update my personal Codex skills."
+policy:
+  allow_implicit_invocation: false

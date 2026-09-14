@@ -1,0 +1,32 @@
+{
+  "name": "plugin-skill",
+  "interface": {
+    "displayName": "Plugin Skill"
+  },
+  "plugins": [
+    {
+      "name": "nose-review",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nose-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "skill-maintenance",
+      "source": {
+        "source": "local",
+        "path": "./plugins/skill-maintenance"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Skill Eraser"
+  short_description: "Audit and recoverably retire personal Codex skills."
+  default_prompt: "Use $skill-eraser to audit my personal Codex skills."
+policy:
+  allow_implicit_invocation: false
