@@ -20,6 +20,8 @@ const record=payload=>JSON.stringify({timestamp,type:'response_item',payload})+'
 const user=text=>record({type:'message',role:'user',content:[{text}]});
 const call=(p,id='call')=>record({type:'function_call',name:'exec_command',call_id:id,arguments:JSON.stringify({cmd:`cat ${p}/SKILL.md`})});
 const validJudgments=evidence=>({judgments:evidence.skills.map(skill=>({id:skill.id,contentHash:skill.contentHash,decision:'observe',reason:'Insufficient version-scoped evidence.',confidence:'low'}))});
+async function judgmentFixture(t) { const f=fixture(t),analysis=await analyze({...f,now}),evidence=JSON.parse(fs.readFileSync(analysis.evidenceFile,'utf8'));return {f,analysis,evidence}; }
+const successfulRunner=(evidence,inspect=()=>{},afterWrite=()=>{})=>(binary,args,options)=>{inspect(binary,args,options);const output=args[args.indexOf('--output-last-message')+1];fs.writeFileSync(output,JSON.stringify(validJudgments(evidence)));afterWrite();return {status:0,stdout:'',stderr:''};};
 
 test('inventory dedupes aliases and excludes plugin owned and system paths',t=>{
  const f=fixture(t); fs.symlinkSync(path.join(f.roots[0],'one'),path.join(f.roots[1],'alias'));
@@ -77,28 +79,26 @@ test('a submitted read counts only after a successful output and quoted Error te
 test('analysis is read-only; approved move and restore verify bytes and aliases',async t=>{
  const f=fixture(t);fs.symlinkSync(path.join(f.roots[0],'one'),path.join(f.roots[1],'alias'));
  const result=await analyze({...f,now});assert.ok(fs.existsSync(result.report));assert.ok(!fs.readFileSync(result.report,'utf8').includes('```'));assert.equal(inventory(f).skills.length,2);
- const judgeEvidence=fs.readFileSync(result.evidenceFile,'utf8');assert.ok(!judgeEvidence.includes(f.roots[0]));assert.ok(!judgeEvidence.includes(f.logsRoot));assert.ok(!judgeEvidence.includes('aliases'));
  const s=result.skills.find(s=>s.name==='one');assert.throws(()=>trash({...f,skillId:s.id,expectedHash:'bad'}),/changed/);
  const moved=trash({...f,skillId:s.id,expectedHash:s.contentHash});assert.equal(moved.status,'verified');assert.equal(inventory(f).skills.length,1);assert.equal(treeHash(moved.target),s.contentHash);
  assert.equal(listTrash(f)[0].id,moved.id);
  const restored=restore({...f,transaction:moved.id});assert.equal(restored.status,'restored');assert.equal(inventory(f).skills.length,2);assert.ok(fs.lstatSync(path.join(f.roots[1],'alias')).isSymbolicLink());assert.equal(listTrash(f)[0].status,'restored');
 });
+test('analysis emits allowlisted evidence for Luna judgment',async t=>{
+ const f=fixture(t),result=await analyze({...f,now}),judgeEvidence=fs.readFileSync(result.evidenceFile,'utf8');assert.ok(!judgeEvidence.includes(f.roots[0]));assert.ok(!judgeEvidence.includes(f.logsRoot));assert.ok(!judgeEvidence.includes('aliases'));
+});
 test('Luna judge pins model and effort, validates identities, and appends the report',async t=>{
- const f=fixture(t),analysis=await analyze({...f,now}),evidence=JSON.parse(fs.readFileSync(analysis.evidenceFile,'utf8'));
- const runner=(binary,args,options)=>{
+ const {f,analysis,evidence}=await judgmentFixture(t);
+ const runner=successfulRunner(evidence,(binary,args,options)=>{
   assert.equal(binary,'codex');assert.ok(args.includes('--ephemeral'));assert.ok(args.includes('--ignore-user-config'));assert.ok(args.includes('--ignore-rules'));assert.equal(args[args.indexOf('-m')+1],judgmentModel);assert.ok(args.includes(`model_reasoning_effort="${judgmentReasoningEffort}"`));assert.ok(options.input.includes('"inventoryErrorCount"'));assert.ok(!options.input.includes(f.roots[0]));
-  const output=args[args.indexOf('--output-last-message')+1];
-  fs.writeFileSync(output,JSON.stringify(validJudgments(evidence)));
-  return {status:0,stdout:'',stderr:''};
- };
+ });
  const result=judge({evidenceFile:analysis.evidenceFile,runner});assert.equal(result.model,'gpt-5.6-luna');assert.equal(result.reasoningEffort,'high');
  const report=fs.readFileSync(analysis.report,'utf8');assert.match(report,/Model: gpt-5\.6-luna/);assert.match(report,/Reasoning effort: high/);
 });
 test('Luna judge fails closed without changing a pending report',async t=>{
- const f=fixture(t),analysis=await analyze({...f,now}),before=fs.readFileSync(analysis.report,'utf8');
+ const {analysis,evidence}=await judgmentFixture(t),before=fs.readFileSync(analysis.report,'utf8');
  assert.throws(()=>judge({evidenceFile:analysis.evidenceFile,runner(){return {status:2,stdout:'',stderr:'private failure'};}}),/failed with status 2/);
  assert.equal(fs.readFileSync(analysis.report,'utf8'),before);
- const evidence=JSON.parse(fs.readFileSync(analysis.evidenceFile,'utf8'));
  assert.throws(()=>judge({evidenceFile:analysis.evidenceFile,runner(binary,args){const output=args[args.indexOf('--output-last-message')+1];fs.writeFileSync(output,JSON.stringify({judgments:[{id:evidence.skills[0].id,contentHash:'wrong',decision:'retire',reason:'wrong',confidence:'high'}]}));return {status:0,stdout:'',stderr:''};}}),/cover every skill|identity/);
  assert.equal(fs.readFileSync(analysis.report,'utf8'),before);
  assert.throws(()=>judge({evidenceFile:analysis.evidenceFile,runner(){return {status:null,error:{code:'ETIMEDOUT'}};}}),/timed out/);assert.equal(fs.readFileSync(analysis.report,'utf8'),before);
@@ -106,8 +106,8 @@ test('Luna judge fails closed without changing a pending report',async t=>{
  let called=false;assert.throws(()=>judge({evidenceFile:analysis.evidenceFile,runner(){called=true;return {status:0};}}),/Invalid skill/);assert.equal(called,false);assert.equal(fs.readFileSync(analysis.report,'utf8'),before);
 });
 test('Luna judge never overwrites a report changed during inference',async t=>{
- const f=fixture(t),analysis=await analyze({...f,now}),evidence=JSON.parse(fs.readFileSync(analysis.evidenceFile,'utf8'));
- const runner=(binary,args)=>{const output=args[args.indexOf('--output-last-message')+1];fs.writeFileSync(output,JSON.stringify(validJudgments(evidence)));fs.appendFileSync(analysis.report,'\nConcurrent note.\n');return {status:0,stdout:'',stderr:''};};
+ const {analysis,evidence}=await judgmentFixture(t);
+ const runner=successfulRunner(evidence,()=>{},()=>fs.appendFileSync(analysis.report,'\nConcurrent note.\n'));
  assert.throws(()=>judge({evidenceFile:analysis.evidenceFile,runner}),/changed during judgment/);const report=fs.readFileSync(analysis.report,'utf8');assert.match(report,/Concurrent note/);assert.ok(!report.includes('skill-eraser-luna-judgment'));
 });
 test('restore refuses collisions and external symlink targets cannot be moved',t=>{
