@@ -87,6 +87,14 @@
         "85e8a1e0c824d989d79497490c757a076af5c98e20240c3d251fc798c7b451ea",
         "93bd9fb5213322030f4df42207565c98df6e71a7809ce8de05e3ecdb28cd47b7"
       ]
+    },
+    {
+      "fingerprint": "7e41e1219a3d9cecdd39aefeb3b2560ebbfb20f61335359f5c972d2dfd46feb1",
+      "reason": "The detector region crosses separate remote-comparison and ref-deletion tests; their shared report assertions are scenario-local oracles, not one extractable contract.",
+      "memberHashes": [
+        "5606fcf176a33c1304d051156dba2e6bb4312258be2bfa76dc4ac5d98353cf12",
+        "893b8942da33118d1999bcfe49127b3cf7963aa081f0d72dd9cf472f4bc6761d"
+      ]
     }
   ]
 }
