@@ -10,6 +10,7 @@ const readJson=path=>JSON.parse(readFileSync(path,'utf8'));
 test('repository marketplace exposes isolated plugin packages',()=>{
   const marketplace=readJson(join(root,'.agents/plugins/marketplace.json'));
   assert.equal(marketplace.name,'plugin-skill');
+  assert.equal(marketplace.interface.displayName,'Joowon-plugin');
   assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin']);
   for(const plugin of marketplace.plugins) {
     const directory=resolve(root,plugin.source.path);

@@ -1,7 +1,7 @@
 {
   "name": "plugin-skill",
   "interface": {
-    "displayName": "Plugin Skill"
+    "displayName": "Joowon-plugin"
   },
   "plugins": [
     {

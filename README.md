@@ -1,4 +1,4 @@
-# Plugin Skill
+# Joowon-plugin
 
 A Codex plugin marketplace containing independently installable packages.
 
