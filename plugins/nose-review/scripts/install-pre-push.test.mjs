@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -48,6 +48,22 @@ test('existing pre-push rejection is preserved and Nose is not run',t=>{
   const push=spawnSync(result.hook,[],{cwd:f.repo,input:'',env:{...process.env,NOSE_TEST_OUTPUT:output}});
   assert.equal(push.status,23);
   assert.equal(existsSync(output),false);
+});
+test('reinstallation restores executable mode on an otherwise current hook',t=>{
+  const f=fixture(t),first=install(f.repo,f.source);
+  chmodSync(first.hook,0o644);
+  install(f.repo,f.source);
+  assert.ok(statSync(first.hook).mode & 0o100);
+});
+for(const damage of ['', 'invalid JavaScript {']) test(`bootstrap rejects damaged dispatcher ${JSON.stringify(damage)}`,t=>{
+  const f=fixture(t),first=install(f.repo,f.source);
+  const managed=join(f.hooks,'.nose-review');
+  const release=readdirSync(managed).find(name=>existsSync(join(managed,name,'dispatch.mjs')));
+  writeFileSync(join(managed,release,'dispatch.mjs'),damage);
+  const run=spawnSync(first.hook,[],{cwd:f.repo,input:'',encoding:'utf8'});
+  assert.equal(run.status,2,run.stderr);
+  assert.match(run.stderr,/NOSE_CHECK_UNAVAILABLE/);
+  assert.match(run.stderr,/Failure record:/);
 });
 test('Nose gate failures propagate through the installed dispatcher',t=>{
   const f=fixture(t);

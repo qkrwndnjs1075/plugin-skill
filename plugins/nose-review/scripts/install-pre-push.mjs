@@ -8,7 +8,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const marker='# nose-review managed pre-push v1';
 const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs','secret-scan.mjs','failure-history.mjs'];
 const quote=text=>"'"+text.replaceAll("'","'\"'\"'")+"'";
-const hookContent=release=>'#!/bin/sh\n'+marker+'\nexec '+quote(process.execPath)+' '+quote(join(release,'dispatch.mjs'))+' "$@"\n';
+function hookContent(release,data) {
+  const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);
+  const bootstrap=`const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),url=require('node:url');
+const root=${JSON.stringify(release)},expected=${JSON.stringify(hashes)};
+(async()=>{try{
+ for(const [name,digest] of expected){const file=path.join(root,name);if(!fs.lstatSync(file).isFile()||crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==digest)throw new Error('Invalid payload');}
+ process.argv.splice(1,0,path.join(root,'dispatch.mjs'));
+ await import(url.pathToFileURL(path.join(root,'dispatch.mjs')).href);
+}catch{
+ console.error('NOSE_CHECK_UNAVAILABLE: Nose hook payload is damaged; rerun install-pre-push.mjs');
+ try{const file=path.join(root,'failure-history.mjs'),digest=expected.find(([name])=>name==='failure-history.mjs')[1];if(!fs.lstatSync(file).isFile()||crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==digest)throw new Error('Invalid history writer');const {saveFailure}=await import(url.pathToFileURL(file).href);console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Hook payload integrity check failed'}));}catch{console.error('Failure history could not be saved');}
+ process.exitCode=2;
+}})();`;
+  return '#!/bin/sh\n'+marker+'\nexec '+quote(process.execPath)+' -e '+quote(bootstrap)+' -- "$@"\n';
+}
 function git(cwd,args) {
   const result=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});
   if(result.status!==0) throw new Error('Not an accessible Git worktree');
@@ -88,8 +102,11 @@ process.exit(check.status);
     ignoreLocalReports(root);
     if(ours) {
       const active=readdirSync(managed).map(name=>join(managed,name))
-        .find(release=>payloadMatches(release,data) && existing===hookContent(release));
-      if(active) return {status:'current',hook};
+        .find(release=>existing===hookContent(release,data) && payloadMatches(release,data));
+      if(active) {
+        if(!(lstatSync(hook).mode & 0o100)){chmodSync(hook,0o755);return {status:'installed',hook};}
+        return {status:'current',hook};
+      }
     }
     const id=createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0,20);
     let release=join(managed,id);
@@ -105,8 +122,7 @@ process.exit(check.status);
         renameSync(staging,release);
       } finally { rmSync(staging,{recursive:true,force:true}); }
     }
-    const content=hookContent(release);
-    if(existing===content) return {status:'current',hook};
+    const content=hookContent(release,data);
     const temporary=join(managed,'pre-push.tmp');
     writeFileSync(temporary,content,{mode:0o755});
     chmodSync(temporary,0o755);
