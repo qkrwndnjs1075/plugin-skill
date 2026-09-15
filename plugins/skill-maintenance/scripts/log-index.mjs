@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { digest } from './inventory.mjs';
 
-export const parserVersion = 3;
+export const parserVersion = 4;
 export function logFiles(root) {
   if (Array.isArray(root)) return [...new Set(root.flatMap(logFiles))];
   if (!fs.existsSync(root)) return [];
@@ -27,11 +27,31 @@ function textOf(value) {
 function failedOutput(payload) {
   if (payload.isError === true) return true;
   let value = payload.output;
+  if(typeof value==='string') {
+    const header=/^Chunk ID: [^\r\n]+\r?\nWall time: [^\r\n]+\r?\nProcess exited with code (-?\d+)\r?\n(?:Final output|Output):/.exec(value);
+    if(header) return Number(header[1])!==0;
+  }
   if (typeof value === 'string' && /^[\[{]/.test(value.trim())) {
     try { value = JSON.parse(value); } catch { return false; }
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   return value.isError === true || (Number.isInteger(value.exit_code) && value.exit_code !== 0) || ['failed', 'error'].includes(String(value.status).toLowerCase());
+}
+function resolvedInputs(payload) {
+  let args;
+  try { args=typeof payload.arguments==='string'?JSON.parse(payload.arguments):payload.arguments; } catch { return []; }
+  const cwd=args?.workdir || args?.cwd;
+  if(typeof cwd!=='string'||!path.isAbsolute(cwd)) return [];
+  const command=args.cmd || args.command;
+  if(typeof command!=='string') return [];
+  // Resolve literal path arguments only; shell expansion is not evidence of a read.
+  const tokens=command.match(/"[^"\n]*"|'[^'\n]*'|[^\s;&|]+/g)||[];
+  if(!/^(?:cat|sed|node|python[\d.]*|bash|sh)$/.test(path.basename(tokens[0]||''))) return [];
+  return tokens.slice(1).flatMap(token=>{
+    const value=token.replace(/^(["'])(.*)\1$/,'$2');
+    if(/[\$`*?<>]/.test(value) || value.startsWith('-')) return [];
+    return [path.resolve(cwd,value)];
+  });
 }
 async function* completeLines(file, start, size) {
   if(start>=size)return;
@@ -53,7 +73,7 @@ function versionAt(skill, timestamp, sources, observed) {
 
 export async function indexLogs({ files, skills, previous = {}, now = new Date(), sources = {} }) {
   const cutoff = now.getTime() - 90 * 86400000;
-  const state = previous.parserVersion === parserVersion ? structuredClone(previous) : { parserVersion, cursors: {}, events: [], observed: {} };
+  const state = previous.parserVersion === parserVersion ? structuredClone(previous) : { parserVersion, cursors: {}, events: [], observed: structuredClone(previous.observed || {}) };
   state.observed ||= {};
   for (const skill of skills) {
     const versions = state.observed[skill.id] ||= [];
@@ -98,7 +118,8 @@ export async function indexLogs({ files, skills, previous = {}, now = new Date()
         const tool = p.name || '';
         // Only executed reads or skill-local script commands count, not arbitrary mentions or writes.
         const canRead = /(?:exec|shell|read_file|read_text)/i.test(tool) && /(?:\bcat\s|\bsed\s|\breadFile|read_file|read_text)/.test(tool + ' ' + input);
-        const matches = skills.filter(s => [s.realPath,...s.aliases].some(base => (canRead && input.includes(base + '/SKILL.md')) || (/(?:exec|shell)/i.test(tool) && /(?:\bnode\s|\bpython\S*\s|\bbash\s|\bsh\s)/.test(input) && input.includes(base + '/scripts/'))));
+        const resolved=resolvedInputs(p);
+        const matches = skills.filter(s => [s.realPath,...s.aliases].some(base => (canRead && (input.includes(base + '/SKILL.md') || resolved.includes(base+'/SKILL.md'))) || (/(?:exec|shell)/i.test(tool) && /(?:\bnode\s|\bpython\S*\s|\bbash\s|\bsh\s)/.test(input) && (input.includes(base + '/scripts/') || resolved.some(file=>file.startsWith(base+'/scripts/'))))));
         if(matches.length)cursor.calls[p.call_id] = matches.map(s=>s.id);
       } else if (record.type === 'response_item' && ['function_call_output','custom_tool_call_output'].includes(p.type)) {
         const linked = cursor.calls[p.call_id] || [], failed = failedOutput(p);

@@ -114,3 +114,30 @@ test('restore refuses collisions and external symlink targets cannot be moved',t
  const f=fixture(t),s=inventory(f).skills[0],m=trash({...f,skillId:s.id,expectedHash:s.contentHash});fs.mkdirSync(s.realPath);assert.throws(()=>restore({...f,transaction:m.id}),/collision/);
  const external=path.join(f.dir,'external');fs.mkdirSync(external);fs.writeFileSync(path.join(external,'SKILL.md'),'name: external');fs.symlinkSync(external,path.join(f.roots[0],'external'));const e=inventory(f).skills.find(s=>s.name==='external');assert.throws(()=>trash({...f,skillId:e.id,expectedHash:e.contentHash}),/External/);
 });
+test('relative skill reads resolve against the command working directory',async t=>{
+ const f=fixture(t),skills=inventory(f).skills,s=skills[0],file=path.join(f.logsRoot,'relative.jsonl');
+ fs.writeFileSync(file,user('$'+s.name)+record({type:'function_call',name:'exec_command',call_id:'relative',arguments:JSON.stringify({cmd:'cat SKILL.md',workdir:s.realPath})})+record({type:'function_call_output',call_id:'relative',output:{exit_code:0}}));
+ const index=await indexLogs({files:[file],skills,now});assert.equal(index.events.filter(e=>e.kind==='use').length,1);
+});
+test('terminal exit envelope is an error but quoted exit text remains ordinary output',async t=>{
+ const f=fixture(t),skills=inventory(f).skills,file=path.join(f.logsRoot,'error.jsonl');
+ const envelope='Chunk ID: fixture\nWall time: 0.01 seconds\nProcess exited with code 1\nFinal output:\nPermission denied';
+ fs.writeFileSync(file,user('work')+call(skills[0].realPath)+record({type:'function_call_output',call_id:'call',output:envelope}));
+ const index=await indexLogs({files:[file],skills,now});assert.equal(index.events.filter(e=>e.kind==='error').length,1);assert.equal(index.events.filter(e=>e.kind==='use').length,0);
+ fs.writeFileSync(file,user('work')+call(skills[0].realPath)+record({type:'function_call_output',call_id:'call',output:'Chunk ID: ok\nWall time: 0.1 seconds\nProcess exited with code 0\nFinal output:\n'+envelope}));
+ const quoted=await indexLogs({files:[file],skills,now});assert.equal(quoted.events.filter(e=>e.kind==='error').length,0);assert.equal(quoted.events.filter(e=>e.kind==='use').length,1);
+});
+test('relative skill mentions in echo are not executed reads',async t=>{
+ const f=fixture(t),skills=inventory(f).skills,file=path.join(f.logsRoot,'mention.jsonl');
+ fs.writeFileSync(file,user('work')+record({type:'function_call',name:'exec_command',call_id:'call',arguments:JSON.stringify({cmd:'echo "cat SKILL.md"',workdir:skills[0].realPath})})+record({type:'function_call_output',call_id:'call',output:{exit_code:0}}));
+ assert.equal((await indexLogs({files:[file],skills,now})).events.length,0);
+});
+test('restore resumes after alias creation fails without losing the skill',t=>{
+ const f=fixture(t),s=inventory(f).skills[0],alias=path.join(f.roots[1],'alias');fs.symlinkSync(s.realPath,alias);
+ const moved=trash({...f,skillId:s.id,expectedHash:s.contentHash});
+ const original=fs.symlinkSync;
+ try {fs.symlinkSync=()=>{throw new Error('injected alias failure');};assert.throws(()=>restore({...f,transaction:moved.id}),/injected alias/);}finally{fs.symlinkSync=original;}
+ assert.equal(treeHash(s.realPath),s.contentHash);
+ assert.equal(restore({...f,transaction:moved.id}).status,'restored');
+ assert.equal(fs.realpathSync(alias),s.realPath);
+});

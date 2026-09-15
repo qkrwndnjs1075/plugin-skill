@@ -81,17 +81,20 @@ export function restore({stateRoot=defaultState,transaction}={}) {
   if (!/^[\w-]+$/.test(transaction || '')) throw new Error('Exact transaction ID required');
   return lock(stateRoot,()=> {
     const file=path.join(stateRoot,'trash',transaction,'manifest.json'), m=read(file,null);
-    if (!m || m.id!==transaction || !['planned','moved','verified'].includes(m.status)) throw new Error('Transaction not restorable');
+    if (!m || m.id!==transaction || !['planned','moved','verified','restoring'].includes(m.status)) throw new Error('Transaction not restorable');
     const expectedTarget=path.resolve(stateRoot,'trash',transaction,'skill');
     if (m.target!==expectedTarget || !m.roots.some(root=>within(path.resolve(root),m.original)) || path.basename(m.original).startsWith('.')) throw new Error('Invalid manifest paths');
-    if (fs.existsSync(m.original) || fs.lstatSync(m.target).isSymbolicLink() || treeHash(m.target)!==m.contentHash) throw new Error('Restore collision or changed recovery copy');
     safeDir(path.dirname(m.original));
+    const original=fs.lstatSync(m.original,{throwIfNoEntry:false}), recovery=fs.lstatSync(m.target,{throwIfNoEntry:false});
+    const resumed=original?.isDirectory() && !recovery && treeHash(m.original)===m.contentHash;
+    if(!resumed && (original || !recovery?.isDirectory() || treeHash(m.target)!==m.contentHash)) throw new Error('Restore collision or changed recovery copy');
     const missingAliases=[];
     for (const alias of m.aliases) {
       if (!m.roots.some(root=>within(path.resolve(root),alias.path))) throw new Error('Invalid alias');
       try { const stat=fs.lstatSync(alias.path); if(!stat.isSymbolicLink() || fs.readlinkSync(alias.path)!==alias.target)throw new Error('Alias collision'); } catch(error) { if(error.code!=='ENOENT') throw error; missingAliases.push(alias); }
     }
-    fs.renameSync(m.target,m.original);
+    m.status='restoring'; save(file,m);
+    if(!resumed) fs.renameSync(m.target,m.original);
     for (const alias of missingAliases) fs.symlinkSync(alias.target,alias.path);
     if(treeHash(m.original)!==m.contentHash) throw new Error('Restore verification failed');
     m.status='restored'; save(file,m); return m;
