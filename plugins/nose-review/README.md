@@ -57,6 +57,12 @@ environment allowlists or inline suppression. Findings contain only rule, file,
 line and commit, never the credential value or source excerpt. This detects known
 secret patterns, not every possible secret, and does not inspect nested archives.
 
+Outgoing commit metadata and the pushed annotated-tag chain are scanned too;
+findings use `git-metadata/<object-id>.commit.txt` or `.tag.txt` locations.
+For duplication checks, `.gitignore`, `.ignore`, and `nose.ignore.json` are
+removed only from verified temporary commit snapshots, so these files cannot
+hide a tracked copy. Manual working-folder scans retain their normal exclusions.
+
 On a new remote ref with no committed baseline, all unreviewed families in the
 pushed snapshot block delivery. On an existing ref, only duplication introduced,
 grown, or changed since its remote tip blocks when no baseline exists. To
@@ -114,6 +120,9 @@ The dispatcher uses a versioned payload copied under the hooks directory's
 cache is replaced. Node.js and Nose must remain available.
 An identical payload leaves the hook untouched; changed payloads update it
 without replacing the saved original hook.
+Reinstallation restores a missing executable bit. The shell entrypoint embeds
+expected payload hashes and checks them before loading the dispatcher; missing,
+empty, or changed payload files block with `NOSE_CHECK_UNAVAILABLE`.
 
 Uninstalling the Codex plugin does not remove repository-local Git hooks.
 To undo a registration, first inspect the installed hook path printed at setup.
@@ -144,6 +153,9 @@ and refresh before editing or accepting them.
 Commit `.nose-review/baseline.json` to share intentional decisions. Add
 `.nose-review/report.json` to the target project's ignore file: it is generated
 output. Acceptance rejects stale source spans or incompatible Nose versions.
+Decisions are serialized and the report and source are revalidated after acquiring
+the lock. Locks owned by an exited process are recovered. Legacy ownerless locks
+are recovered after 30 seconds; an active or unverifiable owner is never evicted.
 
 ## Requirements and limits
 
