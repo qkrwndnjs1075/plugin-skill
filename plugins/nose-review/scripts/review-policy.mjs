@@ -112,9 +112,12 @@ function withBaselineLock(reviewDirectory, operation) {
   for (;;) {
     try {
       mkdirSync(lock, { mode: 0o700 });
+      try { writeFileSync(join(lock,"owner.json"),JSON.stringify({pid:process.pid}),{flag:'wx',mode:0o600}); }
+      catch(error) { rmSync(lock,{recursive:true,force:true}); throw error; }
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
+      if (recoverAbandonedLock(lock)) continue;
       if (Date.now() >= deadline) throw new Error("Another baseline update is still in progress; retry after it finishes.");
       Atomics.wait(waiter, 0, 0, 20);
     }
@@ -124,6 +127,31 @@ function withBaselineLock(reviewDirectory, operation) {
   } finally {
     rmSync(lock, { recursive: true, force: true });
   }
+}
+
+function recoverAbandonedLock(lock) {
+  const before=lstatSync(lock,{throwIfNoEntry:false});
+  if(!before) return true;
+  if(!before.isDirectory()) throw new Error('Baseline lock must be a real directory');
+  const abandoned=()=>{
+    try {
+      const owner=JSON.parse(readFileSync(join(lock,'owner.json'),'utf8'));
+      if(!Number.isSafeInteger(owner.pid)||owner.pid<1) return false;
+      try { process.kill(owner.pid,0); return false; }
+      catch(error) { return error.code==='ESRCH'; }
+    } catch(error) { return error.code==='ENOENT' && Date.now()-before.mtimeMs>30_000; }
+  };
+  if(!abandoned()) return false;
+  const claim=join(lock,'recovery');
+  try { mkdirSync(claim); }
+  catch(error) { if(error.code==='ENOENT') return true; if(error.code==='EEXIST') return false; throw error; }
+  const current=lstatSync(lock,{throwIfNoEntry:false});
+  if(current?.ino===before.ino && abandoned()) {
+    rmSync(lock,{recursive:true,force:true});
+    return true;
+  }
+  rmSync(claim,{recursive:true,force:true});
+  return false;
 }
 
 export function validBaseline(baseline) {
@@ -161,13 +189,15 @@ function main(args) {
   if (installed.status !== 0 || installed.stdout.trim() !== report.noseVersion) {
     throw new Error("Installed Nose version differs from the report or is unavailable; scan again.");
   }
-  const candidate = report.candidates.find((entry) => entry.fingerprint === fingerprint);
-  const memberHashes = candidate ? memberHashesForFamily(candidate, root) : [];
-  if (!candidate || hash(JSON.stringify(memberHashes)) !== fingerprint
-    || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
-    throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
-  }
   withBaselineLock(reviewDirectory, () => {
+    const current=JSON.parse(readFileSync(containedPath(root,'.nose-review/report.json'),'utf8'));
+    if(JSON.stringify(current)!==JSON.stringify(report)) throw new Error('Report changed while awaiting approval; scan again.');
+    const candidate = current.candidates.find((entry) => entry.fingerprint === fingerprint);
+    const memberHashes = candidate ? memberHashesForFamily(candidate, root) : [];
+    if (!candidate || hash(JSON.stringify(memberHashes)) !== fingerprint
+      || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
+      throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
+    }
     const baselineFile = join(reviewDirectory, "baseline.json");
     const baselineExists = lstatSync(baselineFile, { throwIfNoEntry: false });
     const baselinePath = baselineExists ? containedPath(root, baselineFile) : baselineFile;

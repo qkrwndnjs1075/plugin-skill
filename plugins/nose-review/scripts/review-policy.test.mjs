@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -263,6 +263,27 @@ test("concurrent accept commands preserve both decisions", async (t) => {
   assert.deepEqual(results.map(({ status }) => status), [0, 0], results.map(({ stderr }) => stderr).join("\n"));
   const updated = JSON.parse(readFileSync(join(review, "baseline.json"), "utf8"));
   assert.deepEqual(updated.intentional.map(({ fingerprint: value }) => value).sort(), [fingerprint, otherFingerprint].sort());
+});
+for(const owner of ['exited','legacy']) test(`accept recovers ${owner} orphan lock`,t=>{
+  const f=reviewFixture(t),lock=join(f.review,'.baseline.lock');mkdirSync(lock);
+  if(owner==='exited'){
+    const dead=spawnSync(process.execPath,['-e','']);
+    writeFileSync(join(lock,'owner.json'),JSON.stringify({pid:dead.pid}));
+  }
+  utimesSync(lock,new Date(0),new Date(0));
+  const run=accept(f.root,f.fingerprint);
+  assert.equal(run.status,0,run.stderr);
+});
+for(const change of ['source','report']) test(`accept revalidates ${change} after lock acquisition`,t=>{
+  const f=reviewFixture(t),probe=join(f.directory,'probe.mjs');
+  const mutation=change==='source'
+    ? `fs.writeFileSync(${JSON.stringify(join(f.root,'b.js'))},'changed();\\n');`
+    : `fs.writeFileSync(${JSON.stringify(join(f.review,'report.json'))},${JSON.stringify(JSON.stringify({...f.report,candidates:[]}))});`;
+  writeFileSync(probe,`import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const mkdir=fs.mkdirSync;fs.mkdirSync=function(path,...args){if(String(path).endsWith('/.baseline.lock')){${mutation}}return mkdir(path,...args);};syncBuiltinESMExports();`);
+  const before=readFileSync(join(f.review,'baseline.json'),'utf8');
+  const run=spawnSync(process.execPath,['--import',probe,new URL('./review-policy.mjs',import.meta.url).pathname,'accept',f.root,f.fingerprint,'Separate owners'],{encoding:'utf8'});
+  assert.equal(run.status,1,run.stderr);
+  assert.equal(readFileSync(join(f.review,'baseline.json'),'utf8'),before);
 });
 
 test("accept CLI rejects matching files with a stale installed Nose version", (t) => {
