@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync, appendFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync, appendFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const marker='# nose-review managed pre-push v1';
 const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs','secret-scan.mjs','failure-history.mjs'];
 const quote=text=>"'"+text.replaceAll("'","'\"'\"'")+"'";
+const hookContent=release=>'#!/bin/sh\n'+marker+'\nexec '+quote(process.execPath)+' '+quote(join(release,'dispatch.mjs'))+' "$@"\n';
 function git(cwd,args) {
   const result=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});
   if(result.status!==0) throw new Error('Not an accessible Git worktree');
@@ -17,6 +18,15 @@ function regular(path) {
   if(existsSync(path) && !lstatSync(path).isFile()) throw new Error('Refusing non-regular hook or backup: '+path);
   // existsSync follows symlinks, so separately reject dangling ones too.
   if(lstatSync(path,{throwIfNoEntry:false})?.isSymbolicLink()) throw new Error('Refusing symlink: '+path);
+}
+function payloadMatches(directory,data) {
+  try {
+    if(!lstatSync(directory,{throwIfNoEntry:false})?.isDirectory()) return false;
+    return data.every(([name,text])=>{
+      const path=join(directory,name),stat=lstatSync(path,{throwIfNoEntry:false});
+      return stat?.isFile() && !stat.isSymbolicLink() && readFileSync(path,'utf8')===text;
+    });
+  } catch { return false; }
 }
 function ignoreLocalReports(root) {
   const path=resolve(root,git(root,['rev-parse','--git-path','info/exclude']));
@@ -55,35 +65,47 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
     const dispatcher=`import {readFileSync,existsSync,statSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {saveFailure} from './failure-history.mjs';
 const input=readFileSync(0);
 const original=${JSON.stringify(backup)};
 if(existsSync(original) && (statSync(original).mode & 0o111)) {
  const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});
  if(result.error || result.status!==0) process.exit(result.status || 1);
 }
-const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','inherit'],timeout:240000});
-if(check.error || check.signal) {
+const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','pipe'],encoding:'utf8',timeout:240000,maxBuffer:64*1024*1024});
+if(check.stderr) process.stderr.write(check.stderr);
+const expected=check.status===0
+ || (check.status===1 && /NOSE_(?:DUPLICATION|SECRETS)_BLOCKED/.test(check.stderr??''))
+ || (check.status===2 && /NOSE_CHECK_UNAVAILABLE/.test(check.stderr??''));
+if(check.error || check.signal || !expected) {
  console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete');
- try { console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed or exceeded 240 seconds'})); }
+ try { const {saveFailure}=await import('./failure-history.mjs'); console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed, returned an unexpected status, or exceeded 240 seconds'})); }
  catch { console.error('Failure history could not be saved'); }
  process.exit(2);
 }
-process.exit(check.status ?? 2);
+process.exit(check.status);
 `;
     data.push(['dispatch.mjs',dispatcher]);
+    ignoreLocalReports(root);
+    if(ours) {
+      const active=readdirSync(managed).map(name=>join(managed,name))
+        .find(release=>payloadMatches(release,data) && existing===hookContent(release));
+      if(active) return {status:'current',hook};
+    }
     const id=createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0,20);
-    const release=join(managed,id);
-    if(!existsSync(release)) {
-      const staging=join(managed,id+'.tmp-'+process.pid);
+    let release=join(managed,id);
+    if(lstatSync(release,{throwIfNoEntry:false}) && !payloadMatches(release,data)) {
+      do { release=join(managed,id+'-'+randomUUID()); }
+      while(lstatSync(release,{throwIfNoEntry:false}));
+    }
+    if(!payloadMatches(release,data)) {
+      const staging=join(managed,id+'.tmp-'+randomUUID());
       mkdirSync(staging);
       try {
         for(const [name,text] of data) writeFileSync(join(staging,name),text,{mode:0o600});
         renameSync(staging,release);
       } finally { rmSync(staging,{recursive:true,force:true}); }
     }
-    const content='#!/bin/sh\n'+marker+'\nexec '+quote(process.execPath)+' '+quote(join(release,'dispatch.mjs'))+' "$@"\n';
-    ignoreLocalReports(root);
+    const content=hookContent(release);
     if(existing===content) return {status:'current',hook};
     const temporary=join(managed,'pre-push.tmp');
     writeFileSync(temporary,content,{mode:0o755});

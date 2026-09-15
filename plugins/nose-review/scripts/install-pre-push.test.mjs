@@ -51,9 +51,28 @@ test('existing pre-push rejection is preserved and Nose is not run',t=>{
 });
 test('Nose gate failures propagate through the installed dispatcher',t=>{
   const f=fixture(t);
-  writeFileSync(join(f.source,'nose-pre-push.mjs'),'process.exit(1);\n');
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),'process.stderr.write("NOSE_DUPLICATION_BLOCKED: fixture\\n");process.exit(1);\n');
   const result=install(f.repo,f.source);
   assert.equal(spawnSync(result.hook,[],{cwd:f.repo,input:''}).status,1);
+});
+test('corrupted active payload is unavailable and is replaced on reinstall',t=>{
+  const f=fixture(t),output=join(f.temp,'out');
+  const first=install(f.repo,f.source);
+  const firstContent=readFileSync(first.hook,'utf8');
+  const release=readdirSync(join(f.hooks,'.nose-review')).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
+  rmSync(join(f.hooks,'.nose-review',release,'nose-pre-push.mjs'));
+
+  const broken=spawnSync(first.hook,[],{cwd:f.repo,input:'',encoding:'utf8'});
+  assert.equal(broken.status,2,broken.stderr);
+  assert.match(broken.stderr,/NOSE_CHECK_UNAVAILABLE/);
+
+  const repaired=install(f.repo,f.source);
+  assert.equal(repaired.status,'installed');
+  assert.notEqual(readFileSync(repaired.hook,'utf8'),firstContent);
+  const run=spawnSync(repaired.hook,['origin','remote'],{cwd:f.repo,input:'refs/heads/main abc refs/heads/main def\n',encoding:'utf8',env:{...process.env,NOSE_TEST_OUTPUT:output}});
+  assert.equal(run.status,0,run.stderr);
+  assert.ok(existsSync(output));
+  assert.equal(install(f.repo,f.source).status,'current');
 });
 test('SessionStart supplies bounded authorized-push recovery even when hook is current',t=>{
   const f=fixture(t);
