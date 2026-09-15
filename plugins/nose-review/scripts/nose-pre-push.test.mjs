@@ -50,6 +50,25 @@ test('a new branch blocks unreviewed duplicates independently of working files',
   assert.ok(report.candidates.every(family => family.locations.every(location => !location.file.startsWith('/'))));
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
 });
+test('tracked ignored source still blocks duplication at push time',t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.root,'.gitignore'),'b.js\n');
+  f.git('add','.gitignore');f.git('commit','-qm','ignore tracked copy');
+  const result=f.run(f.line(f.git('rev-parse','HEAD')));
+  assert.equal(result.status,1,result.stderr);
+  assert.ok(f.report().candidates.length);
+});
+test('annotated tag messages are scanned and secret values remain redacted',t=>{
+  const f=fixture(t),secret='ghp_'+randomBytes(20).toString('hex');
+  writeFileSync(join(f.root,'b.js'),'export const b=2;\n');
+  f.git('add','b.js');f.git('commit','-qm','clean tree');
+  f.git('tag','-a','secret-tag','-m','token='+secret);
+  const sha=f.git('rev-parse','secret-tag');
+  const result=f.run(`refs/tags/secret-tag ${sha} refs/tags/secret-tag ${zero}\n`);
+  assert.equal(result.status,1,result.stderr);
+  assert.equal(f.report().refs[0].secrets.status,'blocked');
+  assert.equal((result.stderr+JSON.stringify(f.report())).includes(secret),false);
+});
 
 test('a new remote branch scans only new commits and compares against its remote boundary', t => {
   const f = fixture(t);

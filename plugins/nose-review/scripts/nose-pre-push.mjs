@@ -52,6 +52,13 @@ function archivedScan(root, sha, operation, materializeSymlinks=false) {
         throw new Error(`Archive differs from pushed tree: ${file}`);
       }
     }
+    if(!materializeSymlinks) {
+      // Git ignore files govern untracked discovery, not coverage of the pushed tree.
+      for(const entry of entries) {
+        const file=entry.split(/\t(.*)/s)[1];
+        if(['.gitignore','.ignore','nose.ignore.json'].includes(file.split('/').at(-1))) rmSync(join(directory,file),{force:true});
+      }
+    }
     return operation(directory);
   } finally {
     rmSync(directory, {recursive:true, force:true});
@@ -117,7 +124,30 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       }
       outgoing ??= git(root,['rev-list',...range]).trim().split('\n').filter(Boolean);
       record.secrets={status:'passed',findings:[],commitsScanned:0};
+      const metadata=mkdtempSync(join(tmpdir(),'nose-git-metadata-'));
+      try {
+        for(const commit of new Set([...outgoing,localSha])) {
+          const peeled=git(root,['rev-parse',`${commit}^{commit}`]).trim();
+          writeFileSync(join(metadata,peeled+'.commit.txt'),git(root,['cat-file','commit',peeled]),{mode:0o600});
+        }
+        let object=localSha;
+        const seen=new Set();
+        while(git(root,['cat-file','-t',object]).trim()==='tag') {
+          if(seen.has(object)||seen.size>=64) throw new Error('Tag chain exceeds metadata limits');
+          seen.add(object);
+          const content=git(root,['cat-file','tag',object]);
+          writeFileSync(join(metadata,object+'.tag.txt'),content,{mode:0o600});
+          const target=/^object ([a-f0-9]{40}|[a-f0-9]{64})\n/.exec(content)?.[1];
+          if(!target) throw new Error('Invalid tag object');
+          object=target;
+        }
+        const result=scanSecrets(metadata);
+        record.secrets.status=result.status;
+        if(result.reason) record.secrets.reason=result.reason;
+        record.secrets.findings.push(...result.findings.map(finding=>({...finding,file:'git-metadata/'+finding.file,commit:finding.file.split('.')[0]})));
+      } finally { rmSync(metadata,{recursive:true,force:true}); }
       for(const sha of new Set([...outgoing,localSha])) {
+        if(record.secrets.status==='unavailable') break;
         const result=archivedScan(root,sha,scanSecrets,true);
         record.secrets.commitsScanned++;
         record.secrets.findings.push(...result.findings.map(finding=>({...finding,commit:sha})));
