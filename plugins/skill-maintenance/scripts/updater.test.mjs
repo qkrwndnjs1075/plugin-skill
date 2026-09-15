@@ -57,6 +57,29 @@ test('plain-text reference to a root README makes its changes impact-bearing',t=
     assert.match(impact.reasons.join(';'),/instructions|Markdown/);
   }
 });
+test('indirect instruction links require confirmation for root README changes',async t=>{
+  const f=fixture(t);
+  for(const directory of [f.skill.realPath,path.join(f.remote,'demo')]) fs.appendFileSync(path.join(directory,'guide.md'),'\nRead [steps](README.md).\n');
+  f.source.contentHash=treeHash(f.skill.realPath);writeSources(f.stateDir,{schemaVersion:1,skills:{[f.skill.id]:f.source}});
+  git(f.remote,'add','.');git(f.remote,'commit','-m','link operational steps');
+  const result=await runUpdater(f);
+  assert.equal(result.summary.confirmation,1);
+  assert.equal(treeHash(f.skill.realPath),f.source.contentHash);
+});
+test('tag update never silently downgrades an installed version',async t=>{
+  const f=fixture(t);git(f.remote,'tag','v1.8.0');
+  f.source.channel={kind:'tag',ref:'v1.9.0'};writeSources(f.stateDir,{schemaVersion:1,skills:{[f.skill.id]:f.source}});
+  const result=await runUpdater(f);
+  assert.equal(result.summary.updated,undefined);
+  assert.equal(treeHash(f.skill.realPath),f.source.contentHash);
+});
+test('instruction traversal normalizes nested paths and terminates on cycles',t=>{
+  const f=fixture(t),candidate=path.join(f.root,'candidate');
+  fs.writeFileSync(path.join(f.skill.realPath,'guide.md'),'[Back](SKILL.md)\n[Steps](./references/../README.md)\n');
+  fs.cpSync(f.skill.realPath,candidate,{recursive:true});fs.appendFileSync(path.join(candidate,'README.md'),'\nChanged instructions\n');
+  const impact=inspectImpact(f.skill,candidate,{},[f.skill],[]);
+  assert.match(impact.reasons.join(';'),/instructions|Markdown/);
+});
 test('concurrent local change after staging is rehashed and never replaced',async t=>{
   const f=fixture(t),result=await runUpdater({...f,fault(phase){if(phase==='staged')fs.appendFileSync(path.join(f.skill.realPath,'SKILL.md'),'concurrent local edit');}});
   assert.equal(result.summary.conflict,1);assert.match(fs.readFileSync(path.join(f.skill.realPath,'SKILL.md'),'utf8'),/concurrent local edit/);

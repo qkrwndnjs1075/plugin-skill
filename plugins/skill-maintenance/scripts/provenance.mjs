@@ -35,8 +35,8 @@ export function selectTarget(source, refs) {
   if (channel.kind === 'tag') {
     const installed = semver(channel.ref);
     if (!installed) return { confirmationRequired: 'Non-semver tag requires channel selection' };
-    const tag = refs.tags.filter(item => { const parsed = semver(item.name); return parsed && parsed.numbers[0] === installed.numbers[0] && parsed.channel === installed.channel; }).sort((a, b) => versionCompare(b.name, a.name))[0];
-    if (!tag) throw new Error('Compatible tag unavailable');
+    const tag = refs.tags.filter(item => { const parsed = semver(item.name); return parsed && parsed.numbers[0] === installed.numbers[0] && parsed.channel === installed.channel && versionCompare(item.name,channel.ref)>=0; }).sort((a, b) => versionCompare(b.name, a.name))[0];
+    if (!tag) throw new Error('No compatible tag at or above the installed version; downgrade refused');
     return { ...tag, ref: tag.name };
   }
   throw new Error('Unknown installation channel');

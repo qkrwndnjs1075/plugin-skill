@@ -34,15 +34,36 @@ export function validateSkill(directory) {
   }
   return { structure: 'passed', references: 'passed' };
 }
+function instructionDocuments(directory, catalog) {
+  const pending=['SKILL.md'], visited=new Set();
+  const markdown=Object.keys(catalog).filter(file=>file.endsWith('.md'));
+  while(pending.length) {
+    const file=pending.pop();
+    if(visited.has(file)||!catalog[file]) continue;
+    visited.add(file);
+    const text=fs.readFileSync(path.join(directory,file),'utf8');
+    for(const match of text.matchAll(/\]\(([^)#]+)(?:#[^)]*)?\)/g)) {
+      const ref=match[1];
+      if(/^[a-z]+:|^\//i.test(ref)) continue;
+      const target=path.normalize(path.join(path.dirname(file),ref));
+      if(markdown.includes(target)&&!visited.has(target)) pending.push(target);
+    }
+    for(const target of markdown) {
+      const relative=path.relative(path.dirname(file),target);
+      const escaped=relative.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      if(new RegExp(`(^|[^\\w./-])(?:\\./)?${escaped}(?=$|[^\\w/-])`,'m').test(text) && !visited.has(target)) pending.push(target);
+    }
+  }
+  return visited;
+}
 export function inspectImpact(skill, candidate, source, allSkills, configPaths = []) {
   const before = files(skill.realPath), after = files(candidate);
   const changedFiles = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(f => JSON.stringify(before[f]) !== JSON.stringify(after[f]));
   const reasons = [], consumers = [];
   const oldText = fs.readFileSync(path.join(skill.realPath, 'SKILL.md'), 'utf8'), newText = fs.readFileSync(path.join(candidate, 'SKILL.md'), 'utf8');
   const frontmatter = text => text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
-  const markdownReferences = new Set([...oldText.matchAll(/\]\(([^)#]+)(?:#[^)]+)?\)/g), ...newText.matchAll(/\]\(([^)#]+)(?:#[^)]+)?\)/g)].map(match => path.normalize(match[1])));
-  const mentionsFile = (text, file) => new RegExp(`(^|[^\\w./-])(?:\\./)?${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\w/-])`, 'm').test(text);
-  const safeRootDocument = file => path.dirname(file) === '.' && /^(?:README|CHANGELOG|LICENSE)(?:\.[^.]+)?$/i.test(path.basename(file)) && !markdownReferences.has(path.normalize(file)) && !mentionsFile(oldText, file) && !mentionsFile(newText, file);
+  const referenced=new Set([...instructionDocuments(skill.realPath,before),...instructionDocuments(candidate,after)]);
+  const safeRootDocument = file => path.dirname(file) === '.' && /^(?:README|CHANGELOG|LICENSE)(?:\.[^.]+)?$/i.test(path.basename(file)) && !referenced.has(file);
   if (frontmatter(oldText) !== frontmatter(newText)) reasons.push('Skill name, description, or activation contract changed');
   if (changedFiles.some(f => f === 'SKILL.md' || (f.endsWith('.md') && !safeRootDocument(f)))) reasons.push('Skill instructions or referenced Markdown changed');
   if (changedFiles.some(f => !f.endsWith('.md') || before[f]?.executable || after[f]?.executable)) reasons.push('Executable, dependency, or public file contract changed');
