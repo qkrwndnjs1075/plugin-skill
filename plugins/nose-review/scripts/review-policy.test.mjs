@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -211,6 +211,16 @@ function accept(root, fingerprint, reason = "Separate owners") {
   return spawnSync(process.execPath, [new URL("./review-policy.mjs", import.meta.url).pathname, "accept", root, fingerprint, reason], { encoding: "utf8" });
 }
 
+function acceptAsync(root, fingerprint, reason, env) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [new URL("./review-policy.mjs", import.meta.url).pathname, "accept", root, fingerprint, reason], { env });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
 test("accept CLI records one current fingerprint and a reason with atomic replacement", (t) => {
   const { root, fingerprint, review, family } = reviewFixture(t);
   const result = accept(root, fingerprint);
@@ -230,6 +240,29 @@ test("accept CLI initializes an absent baseline from the current report", (t) =>
     schemaVersion: 1, noseVersion: report.noseVersion, accepted: [],
     intentional: [{ fingerprint, reason: "Separate owners", memberHashes: memberHashesForFamily(family, root) }],
   });
+});
+
+test("concurrent accept commands preserve both decisions", async (t) => {
+  const { root, fingerprint, review, report, baseline } = reviewFixture(t);
+  writeFileSync(join(root, "c.js"), "const other = 2;\nreturn other * 2;\n");
+  writeFileSync(join(root, "d.js"), "const other = 2;\nreturn other * 2;\n");
+  const otherFamily = { locations: ["c.js", "d.js"].map((file) => ({ file, start: 1, end: 2 })) };
+  const otherFingerprint = fingerprintFamily(otherFamily, root);
+  report.candidates.push({ ...otherFamily, fingerprint: otherFingerprint });
+  writeFileSync(join(review, "report.json"), JSON.stringify(report));
+
+  const barrier = join(review, "barrier"), bin = join(review, "bin");
+  mkdirSync(barrier); mkdirSync(bin);
+  writeFileSync(join(bin, "nose"), `#!${process.execPath}\nconst fs=require('node:fs'),p=require('node:path'),d=process.env.NOSE_ACCEPT_BARRIER;fs.writeFileSync(p.join(d,process.ppid+'.ready'),'');const end=Date.now()+5000;while(fs.readdirSync(d).length<2&&Date.now()<end)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);console.log(process.env.NOSE_ACCEPT_VERSION);\n`, { mode: 0o700 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, NOSE_ACCEPT_BARRIER: barrier, NOSE_ACCEPT_VERSION: baseline.noseVersion };
+  const results = await Promise.all([
+    acceptAsync(root, fingerprint, "First owner", env),
+    acceptAsync(root, otherFingerprint, "Second owner", env),
+  ]);
+
+  assert.deepEqual(results.map(({ status }) => status), [0, 0], results.map(({ stderr }) => stderr).join("\n"));
+  const updated = JSON.parse(readFileSync(join(review, "baseline.json"), "utf8"));
+  assert.deepEqual(updated.intentional.map(({ fingerprint: value }) => value).sort(), [fingerprint, otherFingerprint].sort());
 });
 
 test("accept CLI rejects matching files with a stale installed Nose version", (t) => {

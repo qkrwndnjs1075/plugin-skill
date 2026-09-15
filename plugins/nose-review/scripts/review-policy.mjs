@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -105,6 +105,27 @@ function containedPath(root, file) {
   return actual;
 }
 
+function withBaselineLock(reviewDirectory, operation) {
+  const lock = join(reviewDirectory, ".baseline.lock");
+  const deadline = Date.now() + 10_000;
+  const waiter = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      mkdirSync(lock, { mode: 0o700 });
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) throw new Error("Another baseline update is still in progress; retry after it finishes.");
+      Atomics.wait(waiter, 0, 0, 20);
+    }
+  }
+  try {
+    return operation();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 export function validBaseline(baseline) {
   return baseline?.schemaVersion === SCHEMA_VERSION
     && typeof baseline.noseVersion === "string" && baseline.noseVersion.trim().length > 0
@@ -134,16 +155,8 @@ function main(args) {
   const reportPath = containedPath(root, ".nose-review/report.json");
   const report = JSON.parse(readFileSync(reportPath, "utf8"));
   const reviewDirectory = containedPath(root, ".nose-review");
-  const baselineFile = join(reviewDirectory, "baseline.json");
-  const baselineExists = lstatSync(baselineFile, { throwIfNoEntry: false });
-  const baselinePath = baselineExists ? containedPath(root, baselineFile) : baselineFile;
-  const baseline = baselineExists ? JSON.parse(readFileSync(baselinePath, "utf8")) : {
-    schemaVersion: SCHEMA_VERSION, noseVersion: report.noseVersion, accepted: [], intentional: [],
-  };
-  if (!validBaseline(baseline) || report?.schemaVersion !== SCHEMA_VERSION
-    || report.noseVersion !== baseline.noseVersion || !Array.isArray(report.candidates)) {
-    throw new Error("Review baseline and report must have matching supported schema and Nose versions.");
-  }
+  if (report?.schemaVersion !== SCHEMA_VERSION || typeof report.noseVersion !== "string"
+    || !Array.isArray(report.candidates)) throw new Error("Report must have a supported schema and Nose version.");
   const installed = spawnSync("nose", ["--version"], { cwd: root, encoding: "utf8", timeout: 10_000 });
   if (installed.status !== 0 || installed.stdout.trim() !== report.noseVersion) {
     throw new Error("Installed Nose version differs from the report or is unavailable; scan again.");
@@ -154,20 +167,31 @@ function main(args) {
     || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
     throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
   }
-  const updated = {
-    ...baseline,
-    intentional: [
-      ...baseline.intentional.filter((entry) => entry.fingerprint !== fingerprint),
-      { fingerprint, reason: reason.trim(), memberHashes },
-    ],
-  };
-  const temporary = join(dirname(baselinePath), `.baseline-${randomUUID()}.tmp`);
-  try {
-    writeFileSync(temporary, `${JSON.stringify(updated, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-    renameSync(temporary, baselinePath);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
+  withBaselineLock(reviewDirectory, () => {
+    const baselineFile = join(reviewDirectory, "baseline.json");
+    const baselineExists = lstatSync(baselineFile, { throwIfNoEntry: false });
+    const baselinePath = baselineExists ? containedPath(root, baselineFile) : baselineFile;
+    const baseline = baselineExists ? JSON.parse(readFileSync(baselinePath, "utf8")) : {
+      schemaVersion: SCHEMA_VERSION, noseVersion: report.noseVersion, accepted: [], intentional: [],
+    };
+    if (!validBaseline(baseline) || report.noseVersion !== baseline.noseVersion) {
+      throw new Error("Review baseline and report must have matching supported schema and Nose versions.");
+    }
+    const updated = {
+      ...baseline,
+      intentional: [
+        ...baseline.intentional.filter((entry) => entry.fingerprint !== fingerprint),
+        { fingerprint, reason: reason.trim(), memberHashes },
+      ],
+    };
+    const temporary = join(dirname(baselinePath), `.baseline-${randomUUID()}.tmp`);
+    try {
+      writeFileSync(temporary, `${JSON.stringify(updated, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+      renameSync(temporary, baselinePath);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  });
   process.stdout.write(`${JSON.stringify({ fingerprint, reason: reason.trim() })}\n`);
 }
 
