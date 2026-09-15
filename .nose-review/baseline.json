@@ -95,6 +95,14 @@
         "5606fcf176a33c1304d051156dba2e6bb4312258be2bfa76dc4ac5d98353cf12",
         "893b8942da33118d1999bcfe49127b3cf7963aa081f0d72dd9cf472f4bc6761d"
       ]
+    },
+    {
+      "fingerprint": "f40958b12197b23480056de065a2c42d55e3787f77b3c4b65a023d1f364d121f",
+      "reason": "The pre-push gate and review-policy command are separate CLI entrypoints with different exit codes, diagnostics, and failure-history responsibilities; sharing their small top-level catch blocks would couple independent process boundaries.",
+      "memberHashes": [
+        "7b669e4bd98daeaf017b1e3059eedf8a547f86c4d66a49cb3cd948594cc358d9",
+        "7bde3d30cad1d2815fbd426013a583b9241e258c14dda831889bc40483761c23"
+      ]
     }
   ]
 }
