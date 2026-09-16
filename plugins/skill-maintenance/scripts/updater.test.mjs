@@ -185,6 +185,14 @@ test('release lookup prefers authenticated GitHub CLI and bounds HTTP fallback',
   const fallback = await publicReleases('example/demo', { runner: () => ({ status: 1, stdout: '' }), request: async (url, options) => { signal = options.signal; return { ok: true, json: async () => [] }; } });
   assert.deepEqual(fallback, []); assert.ok(signal instanceof AbortSignal);
 });
+test('a failed repository clone is not retried for every skill in the same run', async t => {
+  let cloneAttempts = 0;
+  const adapter = createGitHubAdapter({ commandRunner(binary, args) { if (args.includes('clone')) cloneAttempts++; throw new Error('offline'); }, releases: { 'example/demo': [] } });
+  t.after(() => adapter.close());
+  await assert.rejects(adapter.refs('example/demo'), /offline/);
+  await assert.rejects(adapter.refs('example/demo'), /previously failed/);
+  assert.equal(cloneAttempts, 1);
+});
 test('origin recovery considers unchanged subtree at a tagged branch tip and reports channel ambiguity', async t => {
   const f = fixture(t);
   git(f.remote, 'checkout', '-b', 'release-base', f.first);

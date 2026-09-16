@@ -146,19 +146,21 @@ export async function publicReleases(repo, { runner = spawnSync, request = fetch
   throw new Error('GitHub release query unavailable');
 }
 
-export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200, search = searchGitHubCode } = {}) {
-  const clones = new Map();
+export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200, search = searchGitHubCode, commandRunner = command } = {}) {
+  const clones = new Map(), failedClones = new Set();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-upstream-'));
   function clone(repo) {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid GitHub repository');
+    if (failedClones.has(repo)) throw new Error('Repository clone previously failed in this run');
     if (!clones.has(repo)) {
       const directory = path.join(temporary, `${clones.size}`);
-      command('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--bare', '--filter=blob:none', '--', localRemotes[repo] || `https://github.com/${repo}.git`, directory]);
+      try { commandRunner('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--bare', '--filter=blob:none', '--', localRemotes[repo] || `https://github.com/${repo}.git`, directory]); }
+      catch (error) { failedClones.add(repo); throw error; }
       clones.set(repo, directory);
     }
     return clones.get(repo);
   }
-  function git(repo, args) { return command('git', ['-c', 'core.hooksPath=/dev/null', ...args], clone(repo)); }
+  function git(repo, args) { return commandRunner('git', ['-c', 'core.hooksPath=/dev/null', ...args], clone(repo)); }
   return {
     async searchSkill(skill) { return search(skill); },
     async refs(repo) {
