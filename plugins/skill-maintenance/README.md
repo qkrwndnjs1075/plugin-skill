@@ -14,7 +14,7 @@ Plugin-provided skills, including LazyCodex `omo:*` skills, are excluded from bo
 
 The updater needs Node.js 20 or newer, Git, and network access to GitHub. For GitHub candidate search and release lookup it uses an existing `gh` login when available; `GH_TOKEN` or `GITHUB_TOKEN` is optional and used only when already present.
 
-If origin is not already recorded, the updater searches GitHub code for up to eight candidates, but adopts one only after its published commit exactly matches the installed whole subtree. If origin or channel evidence remains ambiguous, it reports `source-unconfirmed` or `source-confirmation` instead of guessing. A confirmed selection is rechecked against the installed content and live Git refs before it is saved.
+If origin is not already recorded, the updater searches GitHub code for up to eight candidates, but adopts one only after its published commit exactly matches the installed whole subtree. Candidate verification fetches only the exact commit instead of cloning every repository ref. Unchanged candidates and non-mutating verification results are cached for 24 hours; unavailable results retry after one hour. If origin or channel evidence remains ambiguous, it reports `source-unconfirmed` or `source-confirmation` instead of guessing. A confirmed selection is rechecked against the installed content and live Git refs before it is saved.
 
 ## Local state
 
@@ -22,5 +22,7 @@ Runtime state stays outside skill directories:
 
 - `~/.codex/skill-eraser/`: usage index, reports, recoverable trash
 - `~/.codex/skill-updater/`: provenance, reports, transactions, one-version backups
+
+The updater state also contains a bounded discovery cache keyed by installed skill content. Changing a skill invalidates its cached candidates immediately.
 
 Raw prompts, responses, tool outputs, and source excerpts are not copied into the usage index or reports.

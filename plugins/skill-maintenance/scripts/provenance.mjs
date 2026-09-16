@@ -91,8 +91,8 @@ export function searchGitHubCode(skill, runner = spawnSync) {
   return parseGitHubCodeSearch(skill, result.stdout);
 }
 
-export async function recoverSource(skill, adapter, candidates) {
-  const unavailable = [];
+export async function recoverSource(skill, adapter, candidates, initialUnavailable = []) {
+  const unavailable = [...initialUnavailable];
   if (candidates === undefined) {
     candidates = discoverOrigins(skill.realPath);
     if (adapter.searchSkill) {
@@ -111,7 +111,11 @@ export async function recoverSource(skill, adapter, candidates) {
       for (const commit of commits) {
         const extracted = await adapter.checkout(candidate.repo, commit, candidate.subtree);
         try {
-          if (treeHash(extracted.path) === skill.contentHash) matches.push({ ...candidate, ...inferChannel(commit, refs), commit, contentHash: skill.contentHash });
+          if (treeHash(extracted.path) === skill.contentHash) {
+            const match = { ...candidate, ...inferChannel(commit, refs), commit, contentHash: skill.contentHash };
+            if (candidate.evidence.kind === 'github-code-search' && candidates.length > 1) return { status: 'source-confirmation', source: match, reason: 'Exact GitHub match found among multiple search candidates; confirm origin and channel' };
+            matches.push(match);
+          }
         } finally { extracted.cleanup(); }
       }
     } catch { unavailable.push(candidate.repo); }
@@ -147,36 +151,61 @@ export async function publicReleases(repo, { runner = spawnSync, request = fetch
 }
 
 export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200, search = searchGitHubCode, commandRunner = command } = {}) {
-  const clones = new Map(), failedClones = new Set();
+  const repositories = new Map(), failedRepositories = new Set();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-upstream-'));
-  function clone(repo) {
+  function repository(repo) {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid GitHub repository');
-    if (failedClones.has(repo)) throw new Error('Repository clone previously failed in this run');
-    if (!clones.has(repo)) {
-      const directory = path.join(temporary, `${clones.size}`);
-      try { commandRunner('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--bare', '--filter=blob:none', '--', localRemotes[repo] || `https://github.com/${repo}.git`, directory]); }
-      catch (error) { failedClones.add(repo); throw error; }
-      clones.set(repo, directory);
+    if (failedRepositories.has(repo)) throw new Error('Repository access previously failed in this run');
+    if (!repositories.has(repo)) {
+      const directory = path.join(temporary, `${repositories.size}`);
+      try {
+        commandRunner('git', ['-c', 'core.hooksPath=/dev/null', 'init', '--bare', directory]);
+        commandRunner('git', ['remote', 'add', 'origin', localRemotes[repo] || `https://github.com/${repo}.git`], directory);
+      } catch (error) { failedRepositories.add(repo); throw error; }
+      repositories.set(repo, directory);
     }
-    return clones.get(repo);
+    return repositories.get(repo);
   }
-  function git(repo, args) { return commandRunner('git', ['-c', 'core.hooksPath=/dev/null', ...args], clone(repo)); }
+  function git(repo, args) { return commandRunner('git', ['-c', 'core.hooksPath=/dev/null', ...args], repository(repo)); }
+  function ensureCommit(repo, commit) {
+    try { git(repo, ['cat-file', '-e', `${commit}^{commit}`]); }
+    catch {
+      try { git(repo, ['fetch', '--depth=1', '--filter=blob:none', 'origin', commit]); }
+      catch (error) { failedRepositories.add(repo); throw error; }
+    }
+  }
   return {
     async searchSkill(skill) { return search(skill); },
     async refs(repo) {
-      const tags = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/tags']).split('\n').filter(Boolean).map(name => ({ name, commit: git(repo, ['rev-parse', `${name}^{commit}`]) }));
-      const branches = git(repo, ['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads']).split('\n').filter(Boolean).map(line => { const [name, commit] = line.split(' '); return { name, commit }; });
-      const api = releases[repo] ?? await publicReleases(repo);
-      return { tags, branches, defaultBranch: git(repo, ['symbolic-ref', '--short', 'HEAD']), releases: api.map(r => ({ tag: r.tag_name, draft: r.draft, prerelease: r.prerelease, publishedAt: r.published_at || '', commit: tags.find(t => t.name === r.tag_name)?.commit })).filter(r => r.commit) };
+      try {
+        const lines = git(repo, ['ls-remote', '--symref', 'origin']).split('\n').filter(Boolean), branches = [], tagCommits = new Map();
+        let defaultBranch = '';
+        for (const line of lines) {
+          const [value, ref] = line.split('\t');
+          if (value?.startsWith('ref: refs/heads/') && ref === 'HEAD') defaultBranch = value.slice('ref: refs/heads/'.length);
+          else if (ref?.startsWith('refs/heads/')) branches.push({ name: ref.slice('refs/heads/'.length), commit: value });
+          else if (ref?.startsWith('refs/tags/')) {
+            const peeled = ref.endsWith('^{}'), name = ref.slice('refs/tags/'.length).replace(/\^\{\}$/, '');
+            if (peeled || !tagCommits.has(name)) tagCommits.set(name, value);
+          }
+        }
+        const tags = [...tagCommits].map(([name, commit]) => ({ name, commit }));
+        const api = releases[repo] ?? await publicReleases(repo);
+        return { tags, branches, defaultBranch: defaultBranch || branches[0]?.name || '', releases: api.map(r => ({ tag: r.tag_name, draft: r.draft, prerelease: r.prerelease, publishedAt: r.published_at || '', commit: tagCommits.get(r.tag_name) })).filter(r => r.commit) };
+      } catch (error) { failedRepositories.add(repo); throw error; }
     },
     async commits(repo, subtree) {
-      const changed = git(repo, ['rev-list', '--all', `--max-count=${maxCommits}`, '--', subtree]).split('\n').filter(Boolean);
-      const refs = git(repo, ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/tags']).split('\n').filter(Boolean);
-      const tips = refs.map(ref => git(repo, ['rev-parse', `${ref}^{commit}`]));
-      return [...new Set([...tips, ...changed])];
+      try {
+        git(repo, ['fetch', '--filter=blob:none', 'origin', '+refs/heads/*:refs/heads/*', '+refs/tags/*:refs/tags/*']);
+        const changed = git(repo, ['rev-list', '--all', `--max-count=${maxCommits}`, '--', subtree]).split('\n').filter(Boolean);
+        const refs = git(repo, ['for-each-ref', '--format=%(refname)', 'refs/heads', 'refs/tags']).split('\n').filter(Boolean);
+        const tips = refs.map(ref => git(repo, ['rev-parse', `${ref}^{commit}`]));
+        return [...new Set([...tips, ...changed])];
+      } catch (error) { failedRepositories.add(repo); throw error; }
     },
     async checkout(repo, commit, subtree) {
       if (!/^[a-f0-9]{40,64}$/.test(commit) || path.isAbsolute(subtree) || subtree.split('/').includes('..')) throw new Error('Unsafe remote tree selector');
+      ensureCommit(repo, commit);
       const directory = fs.mkdtempSync(path.join(temporary, 'tree-'));
       const entries = git(repo, ['ls-tree', '-r', '-z', commit, '--', subtree]).split('\0').filter(Boolean);
       if (entries.length > 10000) throw new Error('Remote tree exceeds file bound');
@@ -187,7 +216,7 @@ export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommi
         if (type !== 'blob' || !['100644', '100755'].includes(mode)) throw new Error('Remote links and submodules require manual handling');
         const relative = subtree === '.' ? filename : path.relative(subtree, filename);
         if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Remote path escaped subtree');
-        const bytes = spawnSync('git', ['cat-file', 'blob', object], { cwd: clone(repo), timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+        const bytes = spawnSync('git', ['cat-file', 'blob', object], { cwd: repository(repo), timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
         if (bytes.status !== 0 || bytes.error) throw new Error('Remote blob unavailable');
         total += bytes.stdout.length;
         if (total > 64 * 1024 * 1024) throw new Error('Remote tree exceeds byte bound');

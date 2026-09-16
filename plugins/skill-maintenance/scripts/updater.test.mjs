@@ -168,6 +168,15 @@ test('GitHub code search only seeds candidates; an exact whole subtree still pro
   const changed = inventory({ roots: f.roots }).skills[0];
   assert.equal((await recoverSource(changed, f.adapter, candidates)).status, 'source-unconfirmed');
 });
+test('the first exact searched match stops mirror traversal and requires source confirmation', async t => {
+  const f = fixture(t), candidates = [
+    { repo: 'example/demo', subtree: 'demo', commit: f.first, evidence: { kind: 'github-code-search' } },
+    { repo: 'example/mirror', subtree: 'demo', commit: f.first, evidence: { kind: 'github-code-search' } },
+  ];
+  const adapter = { ...f.adapter, async refs(repo) { if (repo === 'example/mirror') throw new Error('mirror must not be read'); return f.adapter.refs(repo); }, async checkout(repo, commit, subtree) { if (repo === 'example/mirror') throw new Error('mirror must not be read'); return f.adapter.checkout(repo, commit, subtree); } };
+  const result = await recoverSource(f.skill, adapter, candidates);
+  assert.equal(result.status, 'source-confirmation'); assert.equal(result.source.repo, 'example/demo'); assert.match(result.reason, /multiple search candidates/);
+});
 test('GitHub code search rejects malformed, mismatched, and escaping candidates', () => {
   const skill = { name: 'demo' };
   const rows = [
@@ -185,13 +194,49 @@ test('release lookup prefers authenticated GitHub CLI and bounds HTTP fallback',
   const fallback = await publicReleases('example/demo', { runner: () => ({ status: 1, stdout: '' }), request: async (url, options) => { signal = options.signal; return { ok: true, json: async () => [] }; } });
   assert.deepEqual(fallback, []); assert.ok(signal instanceof AbortSignal);
 });
-test('a failed repository clone is not retried for every skill in the same run', async t => {
-  let cloneAttempts = 0;
-  const adapter = createGitHubAdapter({ commandRunner(binary, args) { if (args.includes('clone')) cloneAttempts++; throw new Error('offline'); }, releases: { 'example/demo': [] } });
+test('a failed repository access is not retried for every skill in the same run', async t => {
+  let remoteAttempts = 0;
+  const adapter = createGitHubAdapter({ commandRunner(binary, args) { if (args.includes('ls-remote')) { remoteAttempts++; throw new Error('offline'); } return ''; }, releases: { 'example/demo': [] } });
   t.after(() => adapter.close());
   await assert.rejects(adapter.refs('example/demo'), /offline/);
   await assert.rejects(adapter.refs('example/demo'), /previously failed/);
-  assert.equal(cloneAttempts, 1);
+  assert.equal(remoteAttempts, 1);
+});
+test('searched candidates fetch only their exact commit instead of cloning all refs', async t => {
+  const f = fixture(t), calls = [];
+  const runner = (binary, args, cwd) => { calls.push(args); const result = spawnSync(binary, args, { cwd, encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 }); if (result.error || result.status !== 0) throw new Error(result.stderr || 'git failed'); return result.stdout.trim(); };
+  const adapter = createGitHubAdapter({ localRemotes: { 'example/demo': f.remote }, releases: { 'example/demo': [] }, commandRunner: runner, search: async () => [] });
+  t.after(() => adapter.close());
+  const extracted = await adapter.checkout('example/demo', f.first, 'demo'); extracted.cleanup();
+  assert.ok(calls.some(args => args.includes('fetch') && args.includes(f.first)));
+  assert.ok(!calls.some(args => args.includes('clone')));
+});
+test('discovery cache avoids repeating search and exact verification for unchanged unproven skills', async t => {
+  const f = fixture(t), roots = [path.join(f.root, 'unproven')], skillPath = path.join(roots[0], 'consumer'), candidate = path.join(f.root, 'candidate');
+  fs.mkdirSync(skillPath, { recursive: true }); fs.writeFileSync(path.join(skillPath, 'SKILL.md'), '---\nname: consumer\ndescription: Consumer\n---\nInstalled.\n');
+  fs.mkdirSync(candidate); fs.writeFileSync(path.join(candidate, 'SKILL.md'), '---\nname: consumer\ndescription: Consumer\n---\nDifferent.\n');
+  let searches = 0, refs = 0, checkouts = 0;
+  const adapter = {
+    async searchSkill() { searches++; return [{ repo: 'example/consumer', subtree: 'consumer', commit: f.first, evidence: { kind: 'github-code-search' } }]; },
+    async refs() { refs++; return { tags: [], releases: [], defaultBranch: 'main', branches: [{ name: 'main', commit: f.first }] }; },
+    async commits() { return []; },
+    async checkout() { checkouts++; return { path: candidate, cleanup() {} }; },
+  };
+  await runUpdater({ roots, stateDir: f.stateDir, adapter, configPaths: [] }); await runUpdater({ roots, stateDir: f.stateDir, adapter, configPaths: [] });
+  assert.deepEqual({ searches, refs, checkouts }, { searches: 1, refs: 1, checkouts: 1 });
+  fs.appendFileSync(path.join(skillPath, 'SKILL.md'), '\nChanged.\n');
+  await runUpdater({ roots, stateDir: f.stateDir, adapter, configPaths: [] });
+  assert.deepEqual({ searches, refs, checkouts }, { searches: 2, refs: 2, checkouts: 2 });
+});
+test('an unavailable GitHub search retries after the one-hour recovery cache expires', async t => {
+  const f = fixture(t), roots = [path.join(f.root, 'unavailable')], skillPath = path.join(roots[0], 'consumer');
+  fs.mkdirSync(skillPath, { recursive: true }); fs.writeFileSync(path.join(skillPath, 'SKILL.md'), '---\nname: consumer\ndescription: Consumer\n---\n');
+  let searches = 0;
+  const adapter = { async searchSkill() { searches++; throw new Error('offline'); } };
+  await runUpdater({ roots, stateDir: f.stateDir, adapter, configPaths: [] });
+  const file = path.join(f.stateDir, 'discovery.json'), cache = JSON.parse(fs.readFileSync(file, 'utf8')), entry = Object.values(cache.skills)[0];
+  entry.recoveryCheckedAt = new Date(Date.now() - 3600001).toISOString(); atomicJson(file, cache);
+  await runUpdater({ roots, stateDir: f.stateDir, adapter, configPaths: [] }); assert.equal(searches, 2);
 });
 test('origin recovery considers unchanged subtree at a tagged branch tip and reports channel ambiguity', async t => {
   const f = fixture(t);
@@ -212,6 +257,12 @@ test('source confirmation rechecks embedded origin, exact tree, and live channel
   const remote=createGitHubAdapter({localRemotes:{'example/demo':f.remote},releases:{'example/demo':[]}});t.after(()=>remote.close());
   const result=await confirmSource({roots:f.roots,stateDir:f.stateDir,adapter:remote,selection:{id:skill.id,contentHash:skill.contentHash,repo:'example/demo',subtree:'demo',commit,channel:{kind:'branch',ref:'provenance'}}});
   assert.equal(result.status,'source-confirmed');assert.equal(readSources(f.stateDir).skills[skill.id].commit,commit);
+});
+test('source confirmation accepts a cached searched candidate only after exact revalidation', async t => {
+  const f = fixture(t); git(f.remote, 'tag', 'v1.0.0', f.first);
+  atomicJson(path.join(f.stateDir, 'discovery.json'), { schemaVersion: 1, skills: { [f.skill.id]: { contentHash: f.skill.contentHash, checkedAt: new Date().toISOString(), candidates: [{ repo: 'example/demo', subtree: 'demo', commit: f.first, evidence: { kind: 'github-code-search', url: 'https://github.com/example/demo/blob/fixture/demo/SKILL.md' } }] } } });
+  const result = await confirmSource({ roots: f.roots, stateDir: f.stateDir, adapter: f.adapter, selection: { id: f.skill.id, contentHash: f.skill.contentHash, repo: 'example/demo', subtree: 'demo', commit: f.first, channel: { kind: 'tag', ref: 'v1.0.0' } } });
+  assert.equal(result.status, 'source-confirmed'); assert.equal(readSources(f.stateDir).skills[f.skill.id].evidence.kind, 'github-code-search');
 });
 test('release and compatible semver tag selection do not follow default branch', () => {
   const refs = { releases: [{ tag: 'v1.1.0', commit: 'stable', publishedAt: '2026-01-01', draft: false, prerelease: false }, { tag: 'v2.0.0-rc.1', commit: 'rc', publishedAt: '2026-02-01', prerelease: true }], tags: ['v1.0.0', 'v1.2.0', 'v2.0.0', 'v1.3.0-beta.2', 'v1.3.0-beta.10'].map(name => ({ name, commit: name })), branches: [] };

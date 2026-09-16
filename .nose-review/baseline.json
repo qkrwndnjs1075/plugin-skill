@@ -103,6 +103,14 @@
         "7b669e4bd98daeaf017b1e3059eedf8a547f86c4d66a49cb3cd948594cc358d9",
         "7bde3d30cad1d2815fbd426013a583b9241e258c14dda831889bc40483761c23"
       ]
+    },
+    {
+      "fingerprint": "b69db5fb9ab2a3d4b3548aed09b0aa8a3f7dc0c38d335b6edb46bbb2371bf158",
+      "reason": "Intentional production-test boundary: Nose Review's runtime git reader and Skill Updater's test-only recording runner have different ownership, timeout, buffer, diagnostics, and assertion contracts; sharing would couple independent plugin packages and production code to test instrumentation.",
+      "memberHashes": [
+        "3ecd5766f10c8ede5e944d94e74500a8fa6abd04912b1d4bbced9ab43c6a8e31",
+        "c19483012390122cc58d124ad938fbefaceb49f84633e6cdb2460330607e625e"
+      ]
     }
   ]
 }

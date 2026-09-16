@@ -181,11 +181,18 @@ function writeReport(stateDir, rows) {
   fs.writeFileSync(report, `# Skill updater\n\n${rows.map(row => `## ${markdownInline(row.name)}: ${markdownInline(row.status)}\n\n${markdownInline(row.reason || '')}\n\n${indentedJson(row)}`).join('\n\n')}\n`, { mode: 0o600 });
   return { summary: rows.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {}), items: rows, report };
 }
+function readDiscovery(stateDir) {
+  const file = path.join(stateDir, 'discovery.json');
+  const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { schemaVersion: 1, skills: {} };
+  if (state.schemaVersion !== 1 || !state.skills) throw new Error('Unsupported discovery cache');
+  return { file, state };
+}
 export async function runUpdater({ roots, excludedRoots, configPaths = [path.join(os.homedir(), '.codex/config.toml'), path.join(os.homedir(), '.codex/AGENTS.md'), path.join(os.homedir(), '.agents/AGENTS.md')], stateDir = defaultState, adapter, candidates, dryRun = false, token, postValidate, fault } = {}) {
   const remote = adapter || createGitHubAdapter();
   try {
     return await withLock(stateDir, async () => {
       const rows = dryRun ? pendingTransactions(stateDir) : recoverTransactions(stateDir), state = readSources(stateDir), catalog = inventory({ roots, excludedRoots });
+      const { file: discoveryFile, state: discovery } = readDiscovery(stateDir);
       let approvals = [];
       if (token) {
         if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid confirmation token');
@@ -199,7 +206,33 @@ export async function runUpdater({ roots, excludedRoots, configPaths = [path.joi
         let source = state.skills[skill.id], extracted;
         try {
           if (!source) {
-            const recovered = await recoverSource(skill, remote, candidates?.[skill.id]);
+            let candidateSet = candidates?.[skill.id], discoveryUnavailable = [];
+            const cachedRecovery = discovery.skills[skill.id]?.contentHash === skill.contentHash ? discovery.skills[skill.id] : null;
+            const recoveryAge = Date.now() - Date.parse(cachedRecovery?.recoveryCheckedAt || '');
+            const recoveryTtl = cachedRecovery?.recovery?.status === 'unavailable' ? 3600000 : 86400000;
+            if (candidateSet === undefined && cachedRecovery?.recovery && recoveryAge < recoveryTtl) {
+              rows.push({ name: skill.name, id: skill.id, contentHash: skill.contentHash, ...cachedRecovery.recovery });
+              continue;
+            }
+            if (candidateSet === undefined) {
+              const local = discoverOrigins(skill.realPath), cached = discovery.skills[skill.id];
+              const fresh = cached?.contentHash === skill.contentHash && Date.now() - Date.parse(cached.checkedAt) < 86400000;
+              if (fresh) candidateSet = [...local, ...cached.candidates];
+              else {
+                try {
+                  const searched = await remote.searchSkill(skill);
+                  discovery.skills[skill.id] = { contentHash: skill.contentHash, checkedAt: new Date().toISOString(), candidates: searched };
+                  atomicJson(discoveryFile, discovery);
+                  candidateSet = [...local, ...searched];
+                } catch { candidateSet = local; discoveryUnavailable = ['GitHub code search']; }
+              }
+            }
+            const recovered = await recoverSource(skill, remote, candidateSet, discoveryUnavailable);
+            if (candidates?.[skill.id] === undefined && recovered.status !== 'recovered') {
+              const entry = discovery.skills[skill.id] || { contentHash: skill.contentHash, checkedAt: new Date().toISOString(), candidates: candidateSet.filter(candidate => candidate.evidence?.kind === 'github-code-search') };
+              discovery.skills[skill.id] = { ...entry, contentHash: skill.contentHash, checkedAt: discoveryUnavailable.length ? null : entry.checkedAt, recoveryCheckedAt: new Date().toISOString(), recovery: recovered };
+              atomicJson(discoveryFile, discovery);
+            }
             if (recovered.status !== 'recovered') { rows.push({ name: skill.name, id: skill.id, contentHash: skill.contentHash, ...recovered }); continue; }
             source = { ...recovered.source, id: skill.id, realPath: skill.realPath, installedAt: new Date().toISOString() };
             state.skills[skill.id] = source; writeSources(stateDir, state);
@@ -244,7 +277,9 @@ export async function confirmSource({ roots, excludedRoots, stateDir = defaultSt
       recoverTransactions(stateDir);
       const skill = inventory({ roots, excludedRoots }).skills.find(s => s.id === selection.id);
       if (!skill || skill.contentHash !== selection.contentHash) throw new Error('Selected skill identity or content changed');
-      const candidates = discoverOrigins(skill.realPath).filter(c => c.repo === selection.repo && c.subtree === selection.subtree);
+      const { state: discovery } = readDiscovery(stateDir);
+      const cached = discovery.schemaVersion === 1 && discovery.skills?.[skill.id]?.contentHash === skill.contentHash ? discovery.skills[skill.id].candidates || [] : [];
+      const candidates = [...discoverOrigins(skill.realPath), ...cached].filter(c => c.repo === selection.repo && c.subtree === selection.subtree && (!c.commit || c.commit === selection.commit));
       if (!candidates.length) throw new Error('Independent origin evidence missing; name alone cannot bind source');
       const extracted = await remote.checkout(selection.repo, selection.commit, selection.subtree);
       try { if (treeHash(extracted.path) !== skill.contentHash) throw new Error('Historical subtree no longer matches installed content'); } finally { extracted.cleanup(); }

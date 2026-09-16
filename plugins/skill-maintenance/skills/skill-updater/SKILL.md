@@ -21,7 +21,7 @@ GitHub candidate discovery and release lookup use an existing `gh` login when av
 3. Summarize `updated`, `current`, `source-unconfirmed`, `source-confirmation`, `confirmation`, `conflict`, `unavailable`, `recovery-required`, `rolled-back`, and `rollback-failed` items separately. Always call out conflicts, rollback failures, and unavailable sources in chat; a report path alone is insufficient.
 4. Link the generated Markdown report.
 
-For a skill without a recorded origin, the updater searches GitHub code for up to eight matching-name candidates and compares each candidate's published commit against the installed whole subtree. A matching skill name is never enough. Follow the installed channel:
+For a skill without a recorded origin, the updater searches GitHub code for up to eight matching-name candidates and compares each candidate's published commit against the installed whole subtree. Candidate verification fetches only that commit. Unchanged candidates and non-mutating verification results are reused for 24 hours, unavailable results retry after one hour, and content changes invalidate the cache. A matching skill name is never enough. Follow the installed channel:
 
 - Stable releases follow the newest published non-draft, non-prerelease release.
 - Semantic-version tags stay on the installed major and prerelease channel.
