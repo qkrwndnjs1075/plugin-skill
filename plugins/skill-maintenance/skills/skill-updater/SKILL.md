@@ -7,6 +7,8 @@ description: Update personal standalone Codex skills from strongly proven GitHub
 
 Run only when explicitly requested. Check all user-managed standalone skills in one pass.
 
+GitHub candidate discovery and release lookup use an existing `gh` login when available.
+
 ## Update pass
 
 1. Use the directory containing this `SKILL.md` as the command working directory. For a request to update, or a bare `$skill-updater` invocation, run:
@@ -19,7 +21,7 @@ Run only when explicitly requested. Check all user-managed standalone skills in 
 3. Summarize `updated`, `current`, `source-unconfirmed`, `source-confirmation`, `confirmation`, `conflict`, `unavailable`, `recovery-required`, `rolled-back`, and `rollback-failed` items separately. Always call out conflicts, rollback failures, and unavailable sources in chat; a report path alone is insufficient.
 4. Link the generated Markdown report.
 
-The updater may recover provenance only from independent origin evidence plus an exact whole-subtree match. A matching skill name is never enough. Follow the installed channel:
+For a skill without a recorded origin, the updater searches GitHub code for up to eight matching-name candidates and compares each candidate's published commit against the installed whole subtree. A matching skill name is never enough. Follow the installed channel:
 
 - Stable releases follow the newest published non-draft, non-prerelease release.
 - Semantic-version tags stay on the installed major and prerelease channel.

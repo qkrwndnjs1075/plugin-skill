@@ -12,9 +12,9 @@ Two explicit-only Codex skills for user-managed skills under `~/.codex/skills` a
 
 Plugin-provided skills, including LazyCodex `omo:*` skills, are excluded from both workflows.
 
-The updater needs Node.js 20 or newer, Git, and network access to GitHub. Public release metadata is read through the GitHub API; `GH_TOKEN` or `GITHUB_TOKEN` is optional and used only when already present.
+The updater needs Node.js 20 or newer, Git, and network access to GitHub. For GitHub candidate search and release lookup it uses an existing `gh` login when available; `GH_TOKEN` or `GITHUB_TOKEN` is optional and used only when already present.
 
-If origin or channel evidence is ambiguous, the updater reports `source-unconfirmed` or `source-confirmation` instead of guessing. A confirmed selection is rechecked against the installed content and live Git refs before it is saved.
+If origin is not already recorded, the updater searches GitHub code for up to eight candidates, but adopts one only after its published commit exactly matches the installed whole subtree. If origin or channel evidence remains ambiguous, it reports `source-unconfirmed` or `source-confirmation` instead of guessing. A confirmed selection is rechecked against the installed content and live Git refs before it is saved.
 
 ## Local state
 

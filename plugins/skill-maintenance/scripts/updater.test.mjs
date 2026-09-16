@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { inventory, treeHash } from './inventory.mjs';
-import { createGitHubAdapter, recoverSource, selectTarget } from './provenance.mjs';
+import { createGitHubAdapter, recoverSource, selectTarget, parseGitHubCodeSearch } from './provenance.mjs';
 import { runUpdater, recoverTransactions, confirmSource, validateSkill, inspectImpact } from './updater.mjs';
 import { writeSources, readSources, atomicJson } from './update-state.mjs';
 
@@ -24,7 +24,7 @@ function fixture(t) {
   const second = git(remote, 'rev-parse', 'HEAD'), skill = inventory({ roots: [skills] }).skills[0];
   const source = { id: skill.id, realPath: skill.realPath, repo: 'example/demo', subtree: 'demo', contentHash: skill.contentHash, commit: first, channel: { kind: 'branch', ref: 'main' }, evidence: { kind: 'install-record' } };
   writeSources(stateDir, { schemaVersion: 1, skills: { [skill.id]: source } });
-  const adapter = createGitHubAdapter({ localRemotes: { 'example/demo': remote }, releases: { 'example/demo': [] } });
+  const adapter = createGitHubAdapter({ localRemotes: { 'example/demo': remote }, releases: { 'example/demo': [] }, search: async () => [] });
   t.after(() => { adapter.close(); fs.rmSync(root, { recursive: true, force: true }); });
   return { root, remote, roots: [skills], stateDir, adapter, skill, source, first, second, configPaths: [] };
 }
@@ -155,6 +155,27 @@ test('origin requires independent evidence and exact historical whole subtree', 
   assert.equal(recovered.source.commit, f.first); assert.equal(recovered.status, 'source-confirmation');
   fs.writeFileSync(path.join(f.skill.realPath, 'extra'), 'local');
   assert.equal((await recoverSource({ ...f.skill, contentHash: treeHash(f.skill.realPath) }, f.adapter, [{ repo: 'example/demo', subtree: 'demo', evidence: { kind: 'install-record' } }])).status, 'source-unconfirmed');
+});
+test('GitHub code search only seeds candidates; an exact whole subtree still proves origin', async t => {
+  const f = fixture(t);
+  const rows = [{ repository: { nameWithOwner: 'example/demo' }, path: 'demo/SKILL.md', url: `https://github.com/example/demo/blob/${f.first}/demo/SKILL.md` }];
+  const candidates = parseGitHubCodeSearch(f.skill, JSON.stringify(rows));
+  assert.equal(candidates.length, 1);
+  const recovered = await recoverSource(f.skill, f.adapter, candidates);
+  assert.equal(recovered.status, 'source-confirmation');
+  assert.equal(recovered.source.commit, f.first);
+  fs.appendFileSync(path.join(f.skill.realPath, 'SKILL.md'), 'Local change');
+  const changed = inventory({ roots: f.roots }).skills[0];
+  assert.equal((await recoverSource(changed, f.adapter, candidates)).status, 'source-unconfirmed');
+});
+test('GitHub code search rejects malformed, mismatched, and escaping candidates', () => {
+  const skill = { name: 'demo' };
+  const rows = [
+    { repository: { nameWithOwner: 'example/demo' }, path: '../demo/SKILL.md', url: 'https://github.com/example/demo/blob/0123456789012345678901234567890123456789/../demo/SKILL.md' },
+    { repository: { nameWithOwner: 'example/other' }, path: 'demo/SKILL.md', url: 'https://github.com/example/demo/blob/0123456789012345678901234567890123456789/demo/SKILL.md' },
+    { repository: { nameWithOwner: 'example/demo' }, path: 'other/SKILL.md', url: 'https://github.com/example/demo/blob/0123456789012345678901234567890123456789/other/SKILL.md' },
+  ];
+  assert.deepEqual(parseGitHubCodeSearch(skill, JSON.stringify(rows)), []);
 });
 test('origin recovery considers unchanged subtree at a tagged branch tip and reports channel ambiguity', async t => {
   const f = fixture(t);

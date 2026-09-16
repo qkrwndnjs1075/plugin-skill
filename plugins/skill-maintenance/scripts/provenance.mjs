@@ -63,14 +63,52 @@ export function discoverOrigins(skillPath) {
   } catch { /* Non-Git downloaded skills can still carry exact source URLs. */ }
   return [...new Map(candidates.map(c => [`${c.repo}/${c.subtree}`, c])).values()];
 }
-export async function recoverSource(skill, adapter, candidates = discoverOrigins(skill.realPath)) {
-  const matches = [];
+
+function searchQuery(name) {
+  if (typeof name !== 'string' || !name.trim() || name.length > 200) throw new Error('Invalid skill name for GitHub search');
+  return `"${name.replaceAll('"', '\\"')}" filename:SKILL.md`;
+}
+
+export function parseGitHubCodeSearch(skill, output) {
+  let rows;
+  try { rows = JSON.parse(output); } catch { throw new Error('GitHub code search returned invalid JSON'); }
+  if (!Array.isArray(rows)) throw new Error('GitHub code search returned an invalid result');
+  const query = searchQuery(skill.name), candidates = [];
+  for (const row of rows.slice(0, 8)) {
+    const repo = row?.repository?.nameWithOwner, file = row?.path, url = row?.url;
+    const match = typeof url === 'string' && /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([a-f0-9]{40})\/(.+)$/.exec(url);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !match || match[1] !== repo || file !== match[3] || !file.endsWith('/SKILL.md') && file !== 'SKILL.md') continue;
+    const subtree = path.posix.dirname(file);
+    if (subtree.split('/').includes('..') || path.posix.basename(subtree) !== skill.name) continue;
+    candidates.push({ repo, subtree, commit: match[2], evidence: { kind: 'github-code-search', query, url } });
+  }
+  return [...new Map(candidates.map(candidate => [`${candidate.repo}:${candidate.subtree}:${candidate.commit}`, candidate])).values()];
+}
+
+export function searchGitHubCode(skill, runner = spawnSync) {
+  const result = runner('gh', ['search', 'code', searchQuery(skill.name), '--limit', '8', '--json', 'repository,path,url'], { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+  if (result.error || result.status !== 0) throw new Error('GitHub code search unavailable');
+  return parseGitHubCodeSearch(skill, result.stdout);
+}
+
+export async function recoverSource(skill, adapter, candidates) {
   const unavailable = [];
+  if (candidates === undefined) {
+    candidates = discoverOrigins(skill.realPath);
+    if (adapter.searchSkill) {
+      try { candidates.push(...await adapter.searchSkill(skill)); }
+      catch { unavailable.push('GitHub code search'); }
+    }
+  }
+  const matches = [];
   for (const candidate of candidates) {
-    if (!candidate.evidence || !['git-origin', 'embedded-exact-url', 'install-record'].includes(candidate.evidence.kind)) continue;
+    if (!candidate.evidence || !['git-origin', 'embedded-exact-url', 'install-record', 'github-code-search'].includes(candidate.evidence.kind)) continue;
     try {
       const refs = await adapter.refs(candidate.repo);
-      for (const commit of await adapter.commits(candidate.repo, candidate.subtree)) {
+      const commits = candidate.evidence.kind === 'github-code-search'
+        ? [candidate.commit]
+        : await adapter.commits(candidate.repo, candidate.subtree);
+      for (const commit of commits) {
         const extracted = await adapter.checkout(candidate.repo, commit, candidate.subtree);
         try {
           if (treeHash(extracted.path) === skill.contentHash) matches.push({ ...candidate, ...inferChannel(commit, refs), commit, contentHash: skill.contentHash });
@@ -94,12 +132,20 @@ async function publicReleases(repo) {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'codex-skill-updater' };
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
-  if (!response.ok) throw new Error(`GitHub release query unavailable (${response.status})`);
-  return response.json();
+  try {
+    const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+    if (response.ok) return response.json();
+  } catch { /* Fall back to an existing GitHub CLI login below. */ }
+  const result = spawnSync('gh', ['api', `repos/${repo}/releases?per_page=100`, '-H', 'Accept: application/vnd.github+json'], { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+  if (result.error || result.status !== 0) throw new Error('GitHub release query unavailable');
+  try {
+    const releases = JSON.parse(result.stdout);
+    if (!Array.isArray(releases)) throw new Error('invalid response');
+    return releases;
+  } catch { throw new Error('GitHub release query returned invalid JSON'); }
 }
 
-export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200 } = {}) {
+export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200, search = searchGitHubCode } = {}) {
   const clones = new Map();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-upstream-'));
   function clone(repo) {
@@ -113,6 +159,7 @@ export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommi
   }
   function git(repo, args) { return command('git', ['-c', 'core.hooksPath=/dev/null', ...args], clone(repo)); }
   return {
+    async searchSkill(skill) { return search(skill); },
     async refs(repo) {
       const tags = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/tags']).split('\n').filter(Boolean).map(name => ({ name, commit: git(repo, ['rev-parse', `${name}^{commit}`]) }));
       const branches = git(repo, ['for-each-ref', '--format=%(refname:short) %(objectname)', 'refs/heads']).split('\n').filter(Boolean).map(line => { const [name, commit] = line.split(' '); return { name, commit }; });
