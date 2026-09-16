@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { inventory, treeHash } from './inventory.mjs';
-import { createGitHubAdapter, recoverSource, selectTarget, parseGitHubCodeSearch } from './provenance.mjs';
+import { createGitHubAdapter, recoverSource, selectTarget, parseGitHubCodeSearch, publicReleases } from './provenance.mjs';
 import { runUpdater, recoverTransactions, confirmSource, validateSkill, inspectImpact } from './updater.mjs';
 import { writeSources, readSources, atomicJson } from './update-state.mjs';
 
@@ -176,6 +176,14 @@ test('GitHub code search rejects malformed, mismatched, and escaping candidates'
     { repository: { nameWithOwner: 'example/demo' }, path: 'other/SKILL.md', url: 'https://github.com/example/demo/blob/0123456789012345678901234567890123456789/other/SKILL.md' },
   ];
   assert.deepEqual(parseGitHubCodeSearch(skill, JSON.stringify(rows)), []);
+});
+test('release lookup prefers authenticated GitHub CLI and bounds HTTP fallback', async () => {
+  let requested = false;
+  const cli = await publicReleases('example/demo', { runner: () => ({ status: 0, stdout: '[]' }), request: async () => { requested = true; } });
+  assert.deepEqual(cli, []); assert.equal(requested, false);
+  let signal;
+  const fallback = await publicReleases('example/demo', { runner: () => ({ status: 1, stdout: '' }), request: async (url, options) => { signal = options.signal; return { ok: true, json: async () => [] }; } });
+  assert.deepEqual(fallback, []); assert.ok(signal instanceof AbortSignal);
 });
 test('origin recovery considers unchanged subtree at a tagged branch tip and reports channel ambiguity', async t => {
   const f = fixture(t);

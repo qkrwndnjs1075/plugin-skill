@@ -128,21 +128,22 @@ export async function recoverSource(skill, adapter, candidates) {
   return { status: 'recovered', source };
 }
 
-async function publicReleases(repo) {
+export async function publicReleases(repo, { runner = spawnSync, request = fetch } = {}) {
+  const cli = runner('gh', ['api', `repos/${repo}/releases?per_page=100`, '-H', 'Accept: application/vnd.github+json'], { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
+  if (!cli.error && cli.status === 0) {
+    try {
+      const releases = JSON.parse(cli.stdout);
+      if (Array.isArray(releases)) return releases;
+    } catch { /* Fall through to a token-backed HTTP request. */ }
+  }
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'codex-skill-updater' };
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
   try {
-    const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+    const response = await request(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers, signal: AbortSignal.timeout(15000) });
     if (response.ok) return response.json();
-  } catch { /* Fall back to an existing GitHub CLI login below. */ }
-  const result = spawnSync('gh', ['api', `repos/${repo}/releases?per_page=100`, '-H', 'Accept: application/vnd.github+json'], { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
-  if (result.error || result.status !== 0) throw new Error('GitHub release query unavailable');
-  try {
-    const releases = JSON.parse(result.stdout);
-    if (!Array.isArray(releases)) throw new Error('invalid response');
-    return releases;
-  } catch { throw new Error('GitHub release query returned invalid JSON'); }
+  } catch { /* The request is bounded; report unavailable below. */ }
+  throw new Error('GitHub release query unavailable');
 }
 
 export function createGitHubAdapter({ localRemotes = {}, releases = {}, maxCommits = 200, search = searchGitHubCode } = {}) {
