@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, projectRoot, scan } from './review-runtime.mjs';
+import { git, projectRoot, scan, sameDuplicateInputs } from './review-runtime.mjs';
 import { filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
+import { scanCommitSecrets } from './commit-secrets.mjs';
 import { saveFailure } from './failure-history.mjs';
 
 const zero = /^0+$/;
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const maxArchiveBytes = 2 * 1024 * 1024 * 1024;
+const maxTreeEntries = 100_000;
 const advise = message => process.stderr.write(`[nose pre-push] ${message}\n`);
 
 function remoteTrackingCommits(root, remoteName) {
@@ -22,33 +25,65 @@ function remoteTrackingCommits(root, remoteName) {
   return [...new Set(commits)];
 }
 
+function blobDigest(content, algorithm) {
+  return createHash(algorithm).update(`blob ${content.length}\0`).update(content).digest('hex');
+}
+
+function fileDigest(path, algorithm) {
+  const size = statSync(path).size;
+  const digest = createHash(algorithm).update(`blob ${size}\0`);
+  const descriptor = openSync(path, 'r');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  try {
+    while (position < size) {
+      const bytesRead = readSync(descriptor, buffer, 0, Math.min(buffer.length, size - position), position);
+      if (bytesRead === 0) throw new Error('Archive file ended before its declared size');
+      digest.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return digest.digest('hex');
+}
+
 function archivedScan(root, sha, operation, materializeSymlinks=false) {
   git(root, ['cat-file', '-e', `${sha}^{commit}`]);
   const directory = mkdtempSync(join(tmpdir(), 'nose-pre-push-'));
+  const archiveDirectory = mkdtempSync(join(tmpdir(), 'nose-pre-push-archive-'));
+  const archivePath = join(archiveDirectory, 'snapshot.tar');
   try {
-    const archive = spawnSync('git', ['archive', '--format=tar', sha], {cwd:root, timeout:30000, maxBuffer:128*1024*1024});
+    const archive = spawnSync('git', ['archive', '--format=tar', '--output', archivePath, sha], {cwd:root, timeout:30000});
     if (archive.status !== 0) throw new Error('Commit archive failed');
-    const extract = spawnSync('tar', ['-xf', '-', '-C', directory], {input:archive.stdout, timeout:30000});
+    if (statSync(archivePath).size > maxArchiveBytes) throw new Error('Commit archive exceeds 2 GiB');
+    const extract = spawnSync('tar', ['-xf', archivePath, '-C', directory], {timeout:30000});
     if (extract.status !== 0) throw new Error('Commit archive extraction failed');
     // Archive attributes may omit or substitute files; never scan a silently altered tree.
     const entries = git(root, ['ls-tree', '-rz', sha]).split('\0').filter(Boolean);
-    if (entries.length > 20000) throw new Error('Commit exceeds 20000 tree entries');
-    const verificationDeadline = Date.now() + 15000;
+    if (entries.length > maxTreeEntries) throw new Error(`Commit exceeds ${maxTreeEntries} tree entries`);
+    const objectFormat = git(root, ['rev-parse', '--show-object-format']).trim();
+    if (!['sha1', 'sha256'].includes(objectFormat)) throw new Error('Unsupported Git object format');
+    const verificationDeadline = Date.now() + 120000;
     for (const entry of entries) {
-      if (Date.now() > verificationDeadline) throw new Error('Commit archive verification exceeded 15 seconds');
+      if (Date.now() > verificationDeadline) throw new Error('Commit archive verification exceeded 120 seconds');
       const [metadata, file] = entry.split(/\t(.*)/s);
       const [mode, type, object] = metadata.split(' ');
       if (type === 'commit') throw new Error('Submodule content cannot be scanned from a commit archive');
       const path = join(directory, file);
       if (mode === '120000') {
+        const target = readlinkSync(path, {encoding:'buffer'});
+        if (blobDigest(target, objectFormat) !== object) {
+          throw new Error(`Archive differs from pushed tree: ${file}`);
+        }
         if(materializeSymlinks) {
-          const target=readlinkSync(path);
           rmSync(path);
           writeFileSync(path,target,{flag:'wx',mode:0o600});
-        } else continue;
+        }
+        continue;
       }
       if (!lstatSync(path, {throwIfNoEntry:false})?.isFile()
-        || git(root, ['hash-object', '--no-filters', path]).trim() !== object) {
+        || fileDigest(path, objectFormat) !== object) {
         throw new Error(`Archive differs from pushed tree: ${file}`);
       }
     }
@@ -59,9 +94,10 @@ function archivedScan(root, sha, operation, materializeSymlinks=false) {
         if(['.gitignore','.ignore','nose.ignore.json'].includes(file.split('/').at(-1))) rmSync(join(directory,file),{force:true});
       }
     }
-    return operation(directory);
+    return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]));
   } finally {
     rmSync(directory, {recursive:true, force:true});
+    rmSync(archiveDirectory, {recursive:true, force:true});
   }
 }
 
@@ -126,7 +162,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       record.secrets={status:'passed',findings:[],commitsScanned:0};
       const metadata=mkdtempSync(join(tmpdir(),'nose-git-metadata-'));
       try {
-        for(const commit of new Set([...outgoing,localSha])) {
+        for(const commit of new Set(outgoing)) {
           const peeled=git(root,['rev-parse',`${commit}^{commit}`]).trim();
           writeFileSync(join(metadata,peeled+'.commit.txt'),git(root,['cat-file','commit',peeled]),{mode:0o600});
         }
@@ -144,24 +180,33 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         const result=scanSecrets(metadata);
         record.secrets.status=result.status;
         if(result.reason) record.secrets.reason=result.reason;
-        record.secrets.findings.push(...result.findings.map(finding=>({...finding,file:'git-metadata/'+finding.file,commit:finding.file.split('.')[0]})));
+        for (const finding of result.findings) record.secrets.findings.push({...finding,file:'git-metadata/'+finding.file,commit:finding.file.split('.')[0]});
       } finally { rmSync(metadata,{recursive:true,force:true}); }
-      for(const sha of new Set([...outgoing,localSha])) {
+      for(const sha of new Set(outgoing)) {
         if(record.secrets.status==='unavailable') break;
-        const result=archivedScan(root,sha,scanSecrets,true);
+        const result=scanCommitSecrets(root,sha);
         record.secrets.commitsScanned++;
-        record.secrets.findings.push(...result.findings.map(finding=>({...finding,commit:sha})));
+        for (const finding of result.findings) record.secrets.findings.push({...finding,commit:sha});
         if(result.status==='unavailable') { record.secrets.status='unavailable'; record.secrets.reason=result.reason; break; }
         if(result.status==='blocked') record.secrets.status='blocked';
       }
-      const local = archivedScan(root, localSha, directory => {
-        const result=scan(directory);
+      if (comparisonSha && sameDuplicateInputs(root, [comparisonSha, localSha])) {
+        record.duplication = {status:'unchanged', comparisonSha};
+        record.comparisonBase = {sha:comparisonSha, identicalInputs:true};
+        record.status = record.secrets.status === 'unavailable' ? 'error'
+          : record.secrets.status === 'blocked' ? 'blocked' : 'scanned';
+        if (record.secrets.reason) record.warnings.push(record.secrets.reason);
+        advise(`${localRef}: duplicate-analysis inputs unchanged from ${comparisonSha}; secrets ${record.secrets.status}`);
+        continue;
+      }
+      const local = archivedScan(root, localSha, (directory, files) => {
+        const result=scan(directory, files);
         const policy=baselineCandidates(directory, result, record.warnings, record.reductions);
         return {noseVersion:result.noseVersion, families:result.families,
           candidates:policy.candidates, hasBaseline:policy.hasBaseline, directory};
       });
       if (comparisonSha) {
-        const remote=archivedScan(root, comparisonSha, directory => scan(directory));
+        const remote=archivedScan(root, comparisonSha, (directory, files) => scan(directory, files));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
         local.candidates=filterRemoteExisting(local.candidates,remote.families);
         record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};

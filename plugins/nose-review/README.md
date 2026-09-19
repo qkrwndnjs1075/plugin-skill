@@ -25,6 +25,18 @@ manual workflow below.
 
 ## What happens on push
 
+Before duplicate analysis, the hook compares Git tree identities with the remote
+comparison commit. If only regular Markdown files differ, every duplicate-analysis
+input is unchanged: the report records `duplication.status: unchanged` without
+rerunning Nose. Source files, symlinks, scanner configuration, and review baselines
+remain part of this comparison. Secret scanning still runs for outgoing changes.
+
+Verified commit archives pass their file inventory into the shared scan owner;
+they do not use ordinary-folder discovery limits. Archive creation writes directly
+to disk and verification hashes files in chunks. Archives remain bounded at 2 GiB
+and 100,000 entries. Actual Nose analyses retain their 45-second limit; this does
+not claim that all large source changes can be analyzed within that budget.
+
 The dispatcher first runs any executable pre-existing pre-push with its original
 arguments and standard input. Its nonzero exit still rejects the push. If it
 passes, Nose inspects each pushed local commit in a temporary snapshot, without
@@ -47,8 +59,11 @@ accepted until its decision is replaced; reduction does not silently rewrite the
 baseline. Legacy decisions without member hashes retain exact-match
 behavior; re-record a current reviewed family to enable reduction recognition.
 
-Gitleaks also checks the pushed tip and every outgoing commit tree, so deleting a
-credential in a later commit does not hide its earlier occurrence. An unavailable
+Gitleaks checks the full contents of added or modified files in every outgoing
+commit, including symlink target bytes and merge changes against the first parent.
+Unchanged inherited files are excluded; a changed file is checked in full, not only
+its added lines. Deleting a credential in a later commit does not hide its earlier
+occurrence. Root commits check all files. An unavailable
 remote commit conservatively scans the reachable local history. This can cost
 more on first pushes. For a new branch on a known remote, commits already reachable
 from that remote's local tracking refs are excluded; when no tracking refs exist,

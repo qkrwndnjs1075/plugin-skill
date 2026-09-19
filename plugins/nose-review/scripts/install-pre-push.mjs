@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const marker='# nose-review managed pre-push v1';
-const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs','secret-scan.mjs','failure-history.mjs'];
+const sources=['nose-pre-push.mjs','review-runtime.mjs','review-policy.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs'];
 const quote=text=>"'"+text.replaceAll("'","'\"'\"'")+"'";
 function hookContent(release,data) {
   const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);

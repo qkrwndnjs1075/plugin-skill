@@ -45,9 +45,19 @@ export function git(root, args) {
   if (result.status !== 0) throw new Error('Git state could not be read');
   return result.stdout;
 }
-export function snapshot(root) {
-  const managed=isGit(root);
-  const files = managed ? [...new Set(git(root,['ls-files','--cached','--others','--exclude-standard','-z']).split('\0').filter(Boolean))].sort() : plainFiles(root);
+export function sameDuplicateInputs(root, commits) {
+  const inventories = commits.map(commit => git(root, ['ls-tree', '-rz', commit])
+    .split('\0').filter(Boolean).filter(entry => {
+      const [metadata, file] = entry.split(/\t(.*)/s);
+      // Markdown is not a Nose source format. Keep symlinks and every other
+      // entry, including scanner configuration and review baselines, in identity.
+      return !/^(100644|100755) blob /.test(metadata) || !file.endsWith('.md');
+    }).join('\0'));
+  return inventories.length === 2 && inventories[0] === inventories[1];
+}
+export function snapshot(root, verifiedFiles) {
+  const managed=verifiedFiles !== undefined || isGit(root);
+  const files = verifiedFiles ?? (managed ? [...new Set(git(root,['ls-files','--cached','--others','--exclude-standard','-z']).split('\0').filter(Boolean))].sort() : plainFiles(root));
   const entries = [];
   let bytes=0;
   for (const file of files) {
@@ -97,13 +107,13 @@ export function register(root, session) {
     return record;
   });
 }
-export function scan(root) {
-  const before = snapshot(root);
+export function scan(root, verifiedFiles) {
+  const before = snapshot(root, verifiedFiles);
   const version = spawnSync('nose',['--version'],{encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
   const cache = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
-    const exclusions=isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
+    const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
     const result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{cwd:root,encoding:'utf8',timeout:45000,maxBuffer:64*1024*1024});
     if (result.status!==0) throw new Error('Nose scan failed or exceeded 45 seconds');
     const report = JSON.parse(result.stdout);
@@ -116,7 +126,7 @@ export function scan(root) {
       const memberHashes=memberHashesForFamily(candidate,root);
       return [{...candidate,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))}];
     });
-    if (JSON.stringify(before)!==JSON.stringify(snapshot(root))) throw new Error('Code changed during scan; review deferred');
+    if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
     return {noseVersion:version.stdout.trim(),families,files:before};
   } finally { rmSync(cache,{recursive:true,force:true}); }
 }
