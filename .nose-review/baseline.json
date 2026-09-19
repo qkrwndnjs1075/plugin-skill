@@ -111,6 +111,14 @@
         "3ecd5766f10c8ede5e944d94e74500a8fa6abd04912b1d4bbced9ab43c6a8e31",
         "c19483012390122cc58d124ad938fbefaceb49f84633e6cdb2460330607e625e"
       ]
+    },
+    {
+      "fingerprint": "66af61b5851d46148d913e782ef5020d6d37fdffaa9145c36099a9ada8b2b1fc",
+      "reason": "plainFiles owns recursive directory discovery and entry-depth limits, while snapshot owns extension filtering, byte limits, and content hashing over a supplied inventory. Merging their loops would collapse the ordinary-folder and verified-Git-snapshot trust boundaries.",
+      "memberHashes": [
+        "6f12b807c2e161c56f2e222391a4eceba49c0c0edfd69a482a793ee91afd5743",
+        "b1982a9520d7c92a8ff7d982fbb8006b2e0df936d91da9ac753d7e0b0c1f754d"
+      ]
     }
   ]
 }
