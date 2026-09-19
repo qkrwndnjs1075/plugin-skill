@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, realpathSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { install } from './install-pre-push.mjs';
+import { gitFixture, pushGit, readReport } from './test-helpers.mjs';
 
 const runner = new URL('./nose-pre-push.mjs', import.meta.url).pathname;
 const zero = '0'.repeat(40);
@@ -21,18 +21,15 @@ const source = name => `export function ${name}(items) {
 }\n`;
 
 function fixture(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nose-push-test-')));
-  t.after(() => rmSync(root, {recursive:true, force:true}));
-  const git = (...args) => execFileSync('git', args, {cwd:root, encoding:'utf8'}).trim();
-  git('init', '-q'); git('config', 'user.email', 'test@example.invalid'); git('config', 'user.name', 'Test');
+  const {root, git} = gitFixture(t, 'nose-push-test-');
   writeFileSync(join(root, 'a.js'), source('alpha'));
   writeFileSync(join(root, 'b.js'), source('beta'));
   git('add', '.'); git('commit', '-qm', 'fixture duplicates');
   const sha = git('rev-parse', 'HEAD');
   const line = (local = sha, remote = zero, ref = 'main') => `refs/heads/${ref} ${local} refs/heads/${ref} ${remote}\n`;
   const run = (input = line(), env = process.env) => spawnSync(process.execPath, [runner, 'origin', 'local-fixture'], {cwd:root, input, env, encoding:'utf8'});
-  const report = () => JSON.parse(readFileSync(join(root, '.nose-review/report.json'), 'utf8'));
-  const push=()=>spawnSync('git',['push','origin','HEAD:refs/heads/main'],{cwd:root,encoding:'utf8'});
+  const report = () => readReport(root);
+  const push = () => pushGit(root, 'HEAD:refs/heads/main');
   return {root, git, sha, line, run, report, push};
 }
 
