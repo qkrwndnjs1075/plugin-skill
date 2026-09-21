@@ -125,7 +125,10 @@ function containedPath(root, file) {
 }
 
 function withBaselineLock(reviewDirectory, operation) {
-  const lock = join(reviewDirectory, ".baseline.lock");
+  return withReviewLock(join(reviewDirectory, '.baseline.lock'), operation, 'baseline update');
+}
+
+export function withReviewLock(lock, operation, label = 'review') {
   const deadline = Date.now() + 10_000;
   const waiter = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
@@ -137,7 +140,7 @@ function withBaselineLock(reviewDirectory, operation) {
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       if (recoverAbandonedLock(lock)) continue;
-      if (Date.now() >= deadline) throw new Error("Another baseline update is still in progress; retry after it finishes.");
+      if (Date.now() >= deadline) throw new Error(`Another ${label} is still in progress; retry after it finishes.`);
       Atomics.wait(waiter, 0, 0, 20);
     }
   }
@@ -151,7 +154,7 @@ function withBaselineLock(reviewDirectory, operation) {
 function recoverAbandonedLock(lock) {
   const before=lstatSync(lock,{throwIfNoEntry:false});
   if(!before) return true;
-  if(!before.isDirectory()) throw new Error('Baseline lock must be a real directory');
+  if(!before.isDirectory()) throw new Error('Review lock must be a real directory');
   const abandoned=()=>{
     try {
       const owner=JSON.parse(readFileSync(join(lock,'owner.json'),'utf8'));
