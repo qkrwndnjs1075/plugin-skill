@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { install } from './install-pre-push.mjs';
 import { gitFixture, pushGit, readReport } from './test-helpers.mjs';
+import { hash } from './review-runtime.mjs';
 
 const runner = new URL('./nose-pre-push.mjs', import.meta.url).pathname;
 const zero = '0'.repeat(40);
@@ -46,6 +47,42 @@ test('a new branch blocks unreviewed duplicates independently of working files',
   assert.equal(report.refs[0].localSha, f.sha);
   assert.ok(report.candidates.every(family => family.locations.every(location => !location.file.startsWith('/'))));
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
+});
+
+test('local and remote scans reuse one locked source path without carrying files between commits', t=>{
+  const f=fixture(t),bin=join(f.root,'fixture-bin'),state=join(f.root,'fixture-state'),calls=join(f.root,'calls.jsonl');
+  mkdirSync(bin);
+  writeFileSync(join(f.root,'local-only.js'),'export const unique=1;\n');
+  f.git('add','local-only.js');f.git('commit','-qm','local change');
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs'),path=require('node:path');
+    if(process.argv.includes('--version'))console.log('nose fixture');
+    else {
+      const args=process.argv.slice(2),cache=args[args.indexOf('--cache-dir')+1];
+      fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({cwd:process.cwd(),cache,local:fs.existsSync('local-only.js')})+'\\n');
+      console.log(JSON.stringify({families:[]}));
+    }
+  `,{mode:0o700});
+  const result=f.run(f.line(f.git('rev-parse','HEAD'),f.sha),{...process.env,PATH:bin+':'+process.env.PATH,NOSE_REVIEW_STATE_ROOT:state});
+  assert.equal(result.status,0,result.stderr);
+  const rows=readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(rows.length,2);
+  assert.equal(rows[0].cwd,rows[1].cwd);
+  assert.equal(rows[0].cache,rows[1].cache);
+  assert.deepEqual(rows.map(row=>row.local),[true,false]);
+  assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot'));
+  assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot.lock'));
+});
+
+for(const redirect of ['snapshot','state']) test(`stable ${redirect} refuses symlinks without deleting the target`,t=>{
+  const f=fixture(t),state=join(f.root,'fixture-state'),owner=join(state,hash(f.root)),target=join(f.root,'keep');
+  mkdirSync(owner,{recursive:true});mkdirSync(target);writeFileSync(join(target,'keep.txt'),'preserve');
+  if(redirect==='state'){rmSync(owner,{recursive:true});symlinkSync(target,owner);}
+  else symlinkSync(target,join(owner,'snapshot'));
+  const result=f.run(f.line(),{...process.env,NOSE_REVIEW_STATE_ROOT:state});
+  assert.equal(result.status,2,result.stderr);
+  assert.equal(readFileSync(join(target,'keep.txt'),'utf8'),'preserve');
+  assert.ok(f.report().refs[0].warnings.some(x=>x.includes('must not be a symlink')));
 });
 test('tracked ignored source still blocks duplication at push time',t=>{
   const f=fixture(t);

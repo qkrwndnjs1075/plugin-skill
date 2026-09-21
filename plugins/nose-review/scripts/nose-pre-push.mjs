@@ -5,8 +5,8 @@ import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, r
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, projectRoot, scan, sameDuplicateInputs } from './review-runtime.mjs';
-import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
+import { git, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
+import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline, withReviewLock } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { scanCommitSecrets } from './commit-secrets.mjs';
 import { saveFailure } from './failure-history.mjs';
@@ -49,8 +49,17 @@ function fileDigest(path, algorithm) {
 }
 
 function archivedScan(root, sha, operation, materializeSymlinks=false) {
+  const state = stateRoot(root);
+  return withReviewLock(join(state, 'snapshot.lock'), () => scanArchive(root, sha, operation, materializeSymlinks, state), 'snapshot scan');
+}
+
+function scanArchive(root, sha, operation, materializeSymlinks, state) {
   git(root, ['cat-file', '-e', `${sha}^{commit}`]);
-  const directory = mkdtempSync(join(tmpdir(), 'nose-pre-push-'));
+  // Nose keys workspace generations by canonical source root, not cache path.
+  const directory = join(state, 'snapshot');
+  if (lstatSync(directory,{throwIfNoEntry:false})?.isSymbolicLink()) throw new Error('Snapshot directory must not be a symlink');
+  rmSync(directory,{recursive:true,force:true});
+  mkdirSync(directory,{mode:0o700});
   const archiveDirectory = mkdtempSync(join(tmpdir(), 'nose-pre-push-archive-'));
   const archivePath = join(archiveDirectory, 'snapshot.tar');
   try {
@@ -210,7 +219,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         continue;
       }
       const local = archivedScan(root, localSha, (directory, files) => {
-        const result=scan(directory, files);
+        const result=scan(directory, files, root);
         const policy=baselineCandidates(directory, root, result, record.warnings, record.reductions);
         return {noseVersion:result.noseVersion, families:result.families,
           candidates:policy.candidates, hasBaseline:policy.hasBaseline,
@@ -218,7 +227,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       });
       if(local.baselineSource) record.baselineSource=local.baselineSource;
       if (comparisonSha) {
-        const remote=archivedScan(root, comparisonSha, (directory, files) => scan(directory, files));
+        const remote=archivedScan(root, comparisonSha, (directory, files) => scan(directory, files, root));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
         local.candidates=filterRemoteExisting(local.candidates,remote.families);
         const changedFiles=git(root,['diff','--name-only','-z',comparisonSha,localSha,'--']).split('\0').filter(Boolean);

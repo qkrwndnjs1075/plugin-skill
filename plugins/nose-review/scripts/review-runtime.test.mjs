@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { tmpdir, homedir, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { scan, projectRoot, snapshot } from './review-runtime.mjs';
@@ -80,4 +80,47 @@ test('scan accepts valid Nose JSON larger than the child-process output buffer',
   const previous=process.env.PATH;process.env.PATH=bin+':'+previous;
   try { assert.deepEqual(scan(repo).families,[]); }
   finally { process.env.PATH=previous; }
+});
+
+test('scans bound workers and reuse the project cache across temporary snapshots', t=>{
+  const fixture=mkdtempSync(join(tmpdir(),'nose-resources-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const bin=join(fixture,'bin'),owner=join(fixture,'owner');
+  mkdirSync(bin);mkdirSync(owner);
+  const calls=join(fixture,'calls.jsonl');
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs'),path=require('node:path');
+    if(process.argv.includes('--version')) console.log('nose fixture');
+    else {
+      const args=process.argv.slice(2),cache=args[args.indexOf('--cache-dir')+1];
+      fs.mkdirSync(cache,{recursive:true});
+      const marker=path.join(cache,'cache-marker');
+      fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({threads:process.env.RAYON_NUM_THREADS,cache,hit:fs.existsSync(marker),args})+'\\n');
+      fs.writeFileSync(marker,'cached analysis');
+      console.log(JSON.stringify({families:[]}));
+    }
+  `,{mode:0o700});
+  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT,RAYON_NUM_THREADS:process.env.RAYON_NUM_THREADS};
+  process.env.PATH=bin+':'+previous.PATH;process.env.NOSE_REVIEW_STATE_ROOT=join(fixture,'state');delete process.env.RAYON_NUM_THREADS;
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  for(const name of ['snapshot1','snapshot2']) {
+    const root=join(fixture,name);mkdirSync(root);writeFileSync(join(root,'app.js'),'const x=1;\n');
+    scan(root,['app.js'],owner);
+  }
+  const rows=readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(rows[0].threads,String(Math.min(2,availableParallelism())));
+  assert.equal(rows[1].cache,rows[0].cache);
+  assert.equal(rows[0].hit,false);assert.equal(rows[1].hit,true);
+  assert.ok(existsSync(rows[0].cache));
+  assert.ok(rows[0].args.includes('syntax,semantic,near'));
+  assert.equal(process.env.RAYON_NUM_THREADS,undefined);
+  process.env.RAYON_NUM_THREADS='1';scan(owner);
+  const last=JSON.parse(readFileSync(calls,'utf8').trim().split('\n').at(-1));
+  assert.equal(last.threads,'1');
+  const count=readFileSync(calls,'utf8');
+  for(const invalid of ['0','auto','-1','1.5','',String(availableParallelism()+1)]) {
+    process.env.RAYON_NUM_THREADS=invalid;
+    assert.throws(()=>scan(owner),/RAYON_NUM_THREADS/);
+  }
+  assert.equal(readFileSync(calls,'utf8'),count);
 });

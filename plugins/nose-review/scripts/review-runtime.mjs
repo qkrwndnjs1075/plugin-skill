@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, extname, dirname, parse } from 'node:path';
-import { tmpdir, homedir } from 'node:os';
-import { memberHashesForFamily, hash } from './review-policy.mjs';
+import { tmpdir, homedir, availableParallelism } from 'node:os';
+import { createMemberHasher, hash } from './review-policy.mjs';
 export { hash } from './review-policy.mjs';
 
 export const scanTimeoutMs = 600_000;
@@ -83,6 +83,7 @@ export function atomicJson(path, value) {
 export function stateRoot(root) {
   const directory = join(process.env.NOSE_REVIEW_STATE_ROOT ?? join(tmpdir(),'nose-review-v2'),hash(root));
   mkdirSync(directory,{recursive:true,mode:0o700});
+  if (lstatSync(directory).isSymbolicLink()) throw new Error('Review state directory must not be a symlink');
   return directory;
 }
 export function withRegistry(root, operation) {
@@ -110,21 +111,29 @@ export function register(root, session) {
     return record;
   });
 }
-export function scan(root, verifiedFiles) {
+export function scan(root, verifiedFiles, cacheOwner = root) {
+  const parallelism = availableParallelism();
+  const threads = process.env.RAYON_NUM_THREADS ?? String(Math.min(2, parallelism));
+  if (!/^[1-9]\d*$/.test(threads) || !Number.isSafeInteger(Number(threads)) || Number(threads) > parallelism)
+    throw new Error(`RAYON_NUM_THREADS must be an integer from 1 to ${parallelism}`);
   const before = snapshot(root, verifiedFiles);
   const started = Date.now();
   const version = spawnSync('nose',['--version'],{encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
-  const cache = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
+  const cache = join(stateRoot(realpathSync(cacheOwner)), 'analysis-cache');
+  mkdirSync(cache,{recursive:true,mode:0o700});
+  if (lstatSync(cache).isSymbolicLink()) throw new Error('Analysis cache must not be a symlink');
+  const temporary = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
     const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
-    const reportPath=join(cache,'report.json');
+    const reportPath=join(temporary,'report.json');
     const reportDescriptor=openSync(reportPath,'wx',0o600);
     let result;
     try {
-      process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; budget ${scanTimeoutMs / 1000}s\n`);
+      process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; workers ${threads}; reusable cache ${cache}; budget ${scanTimeoutMs / 1000}s\n`);
       result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{
         cwd:root,
+        env:{...process.env,RAYON_NUM_THREADS:threads},
         encoding:'utf8',
         timeout:scanTimeoutMs,
         maxBuffer:8*1024*1024,
@@ -136,18 +145,21 @@ export function scan(root, verifiedFiles) {
     if (result.error?.code==='ETIMEDOUT') throw new Error(`Nose scan exceeded ${scanTimeoutMs / 1000} seconds`);
     if (result.signal) throw new Error(`Nose scan terminated by ${result.signal}`);
     if (result.status!==0) throw new Error('Nose scan failed');
+    process.stderr.write(`[nose scan] scanner finished in ${Math.ceil((Date.now() - started) / 1000)}s; loading report\n`);
     const report = JSON.parse(readFileSync(reportPath,'utf8'));
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
+    process.stderr.write(`[nose scan] verifying ${report.families.length} families against source\n`);
+    const memberHashesForFamily = createMemberHasher(root);
     const families = report.families.flatMap(family=>{
       if (!Array.isArray(family?.locations)) throw new Error('Family must contain source locations.');
       const locations=family.locations.filter(location=>location?.region !== null);
       if (locations.length !== family.locations.length && locations.length < 2) return [];
       const candidate=locations.length === family.locations.length ? family : {...family,locations};
-      const memberHashes=memberHashesForFamily(candidate,root);
+      const memberHashes=memberHashesForFamily(candidate);
       return [{...candidate,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))}];
     });
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
     process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
     return {noseVersion:version.stdout.trim(),families,files:before};
-  } finally { rmSync(cache,{recursive:true,force:true}); }
+  } finally { rmSync(temporary,{recursive:true,force:true}); }
 }

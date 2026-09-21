@@ -42,6 +42,12 @@ arguments and standard input. Its nonzero exit still rejects the push. If it
 passes, Nose inspects each pushed local commit in a temporary snapshot, without
 checking out branches or changing the index or working tree.
 
+Snapshots use one private, locked path per project, emptied before each verified
+extraction and removed afterward. Keeping the pathname stable lets Nose reuse its
+workspace cache between local and remote commits. Concurrent snapshot scans wait
+up to 10 seconds and then report unavailable instead of sharing mutable files;
+locks from exited processes are recovered.
+
 Reviewed fingerprints and intentional decisions in the local, Git-excluded
 `.nose-review/baseline.json` remain the durable source of review decisions for
 that checkout. The hook applies them to the verified pushed snapshot, so a stale
@@ -179,6 +185,18 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
 - Node.js 20+, Nose and Gitleaks on PATH (tested with Nose 0.21.0 and Gitleaks 8.29.1).
   Gitleaks is a prerequisite, not silently installed by SessionStart.
 - Git and tar for pre-push commit snapshots. No Git is required for manual folder scans.
+- Shared scans default to two Rayon workers (one on a single-CPU host). Set
+  `RAYON_NUM_THREADS` to a positive integer up to available parallelism to choose
+  another budget. Invalid values fail before scanning. This bounds worker
+  concurrency, not total OS CPU percentage; it does not throttle unrelated tools.
+- Analysis cache persists under the project's runtime state directory, in
+  `analysis-cache`; each scan prints its path. Nose owns content/configuration
+  invalidation and its default 5 GiB storage budget. Use `nose cache status` or
+  `nose cache clear` with `--dir` pointing to the printed directory when
+  inspection or reclamation is needed. Cached analysis never records approval.
+  Cold scans can take longer with fewer workers; unchanged reruns benefit most.
+  Source lines and span hashes are reused only within a scan, whose final source
+  snapshot must still match. Manual acceptance always starts a fresh reader.
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
@@ -187,7 +205,8 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   limit per scan. The dispatcher derives its budget from the same scan limit:
   two scans plus 60 seconds per pushed ref (1,260 seconds), multiplied by the ref count.
   Manual recovery and pushed snapshots use the same budget. Scans report source count,
-  budget, completion time, and family count on stderr. A failure/timeout blocks and is reported.
+  worker budget, cache path, scanner completion, source-verification phase and family
+  count on stderr. A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.
