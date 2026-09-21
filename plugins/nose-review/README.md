@@ -34,8 +34,8 @@ remain part of this comparison. Secret scanning still runs for outgoing changes.
 Verified commit archives pass their file inventory into the shared scan owner;
 they do not use ordinary-folder discovery limits. Archive creation writes directly
 to disk and verification hashes files in chunks. Archives remain bounded at 2 GiB
-and 100,000 entries. Actual Nose analyses retain their 45-second limit; this does
-not claim that all large source changes can be analyzed within that budget.
+and 100,000 entries. Actual Nose analyses use the shared scan budget described
+below; exceeding it remains a check failure.
 
 The dispatcher first runs any executable pre-existing pre-push with its original
 arguments and standard input. Its nonzero exit still rejects the push. If it
@@ -182,10 +182,12 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
-- Nose has a 180-second limit per immutable snapshot and writes its JSON to a private temporary
+- Nose has a 600-second limit per scan and writes its JSON to a private temporary
   file instead of buffering the whole report in the hook process. Gitleaks keeps a 45-second
-  limit per scan. The dispatcher bounds the complete invocation to 420 seconds so an existing-ref
-  push can include both local and remote Nose snapshots. A failure/timeout blocks and is reported.
+  limit per scan. The dispatcher derives its budget from the same scan limit:
+  two scans plus 60 seconds per pushed ref (1,260 seconds), multiplied by the ref count.
+  Manual recovery and pushed snapshots use the same budget. Scans report source count,
+  budget, completion time, and family count on stderr. A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

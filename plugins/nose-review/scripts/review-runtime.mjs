@@ -5,6 +5,9 @@ import { tmpdir, homedir } from 'node:os';
 import { memberHashesForFamily, hash } from './review-policy.mjs';
 export { hash } from './review-policy.mjs';
 
+export const scanTimeoutMs = 600_000;
+export const refTimeoutMs = 2 * scanTimeoutMs + 60_000;
+
 const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.html','.java','.js','.jsx','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
 const excluded = new Set(['.git','.nose-review','node_modules','.venv','venv','__pycache__','dist','build','target','vendor','.next','.nuxt','coverage','.cache']);
 export function projectRoot(cwd) {
@@ -109,6 +112,7 @@ export function register(root, session) {
 }
 export function scan(root, verifiedFiles) {
   const before = snapshot(root, verifiedFiles);
+  const started = Date.now();
   const version = spawnSync('nose',['--version'],{encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
   const cache = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
@@ -118,17 +122,19 @@ export function scan(root, verifiedFiles) {
     const reportDescriptor=openSync(reportPath,'wx',0o600);
     let result;
     try {
+      process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; budget ${scanTimeoutMs / 1000}s\n`);
       result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{
         cwd:root,
         encoding:'utf8',
-        timeout:180000,
+        timeout:scanTimeoutMs,
         maxBuffer:8*1024*1024,
         stdio:['ignore',reportDescriptor,'pipe'],
       });
     } finally {
       closeSync(reportDescriptor);
     }
-    if (result.error?.code==='ETIMEDOUT' || result.signal) throw new Error('Nose scan exceeded 180 seconds');
+    if (result.error?.code==='ETIMEDOUT') throw new Error(`Nose scan exceeded ${scanTimeoutMs / 1000} seconds`);
+    if (result.signal) throw new Error(`Nose scan terminated by ${result.signal}`);
     if (result.status!==0) throw new Error('Nose scan failed');
     const report = JSON.parse(readFileSync(reportPath,'utf8'));
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
@@ -141,6 +147,7 @@ export function scan(root, verifiedFiles) {
       return [{...candidate,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))}];
     });
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
+    process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
     return {noseVersion:version.stdout.trim(),families,files:before};
   } finally { rmSync(cache,{recursive:true,force:true}); }
 }
