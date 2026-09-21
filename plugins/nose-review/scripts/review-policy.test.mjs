@@ -4,6 +4,9 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import * as policy from './review-policy.mjs';
 
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
 import { scan } from "./review-runtime.mjs";
@@ -18,6 +21,29 @@ function fixture(t) {
   const family = { locations: ["a.js", "b.js"].map((file) => ({ file, start: 1, end: 2 })) };
   return { directory, root, family };
 }
+
+test('one scan hashes repeated source members once without carrying stale reads into another scan', t => {
+  const {root,family}=fixture(t);
+  const expected=memberHashesForFamily(family,root);
+  const original=fs.readFileSync;
+  let reads=0;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{
+    if(String(file).endsWith('/a.js') || String(file).endsWith('/b.js')) reads++;
+    return original(file,...args);
+  });
+  syncBuiltinESMExports();
+  t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
+  for(let i=0;i<100;i++) memberHashesForFamily(family,root);
+  assert.equal(reads,200);
+  reads=0;
+  const members=policy.createMemberHasher(root);
+  for(let i=0;i<100;i++) assert.deepEqual(members(family),expected);
+  assert.equal(reads,2);
+  writeFileSync(join(root,'a.js'),'const value = 2;\nreturn value;\n');
+  assert.notDeepEqual(policy.createMemberHasher(root)(family),expected);
+  assert.throws(()=>members({locations:[{file:'a.js',start:1,end:99}]}),/exceeds/);
+  assert.throws(()=>members({locations:[{file:'../private.js',start:1,end:1}]}));
+});
 
 test("fingerprint survives file moves, line shifts, member reorder and trailing whitespace", (t) => {
   const { root, family } = fixture(t);

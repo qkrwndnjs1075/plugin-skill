@@ -14,24 +14,36 @@ export function fingerprintFamily(family, repoRoot) {
 }
 
 export function memberHashesForFamily(family, repoRoot) {
-  if (!Array.isArray(family?.locations) || family.locations.length === 0) {
-    throw new Error("Family must contain source locations.");
-  }
+  return createMemberHasher(repoRoot)(family);
+}
+
+// Scope reuse to one scan; callers must verify source stability before using it.
+export function createMemberHasher(repoRoot) {
   const root = realpathSync(repoRoot);
-  const members = family.locations.map(({ file, start, end }) => {
-    if (typeof file !== "string" || !Number.isInteger(start)
-      || !Number.isInteger(end) || start < 1 || end < start) {
-      throw new Error("Invalid source span.");
+  const files = new Map();
+  return family => {
+    if (!Array.isArray(family?.locations) || family.locations.length === 0) {
+      throw new Error("Family must contain source locations.");
     }
-    const path = containedPath(root, file);
-    const lines = readFileSync(path, "utf8").split(/\r?\n/);
-    if (lines.at(-1) === "") lines.pop();
-    if (end > lines.length) throw new Error(`Source span exceeds file: ${file}`);
-    const content = lines.slice(start - 1, end)
-      .map((line) => line.trimEnd()).join("\n");
-    return hash(content);
-  });
-  return members.sort();
+    return family.locations.map(({ file, start, end }) => {
+      if (typeof file !== "string" || !Number.isInteger(start)
+        || !Number.isInteger(end) || start < 1 || end < start) {
+        throw new Error("Invalid source span.");
+      }
+      const path = containedPath(root, file);
+      let source = files.get(path);
+      if (!source) {
+        const lines = readFileSync(path, "utf8").split(/\r?\n/);
+        if (lines.at(-1) === "") lines.pop();
+        source = {lines:lines.map(line=>line.trimEnd()),spans:new Map()};
+        files.set(path,source);
+      }
+      if (end > source.lines.length) throw new Error(`Source span exceeds file: ${file}`);
+      const key = `${start}:${end}`;
+      if (!source.spans.has(key)) source.spans.set(key,hash(source.lines.slice(start - 1,end).join("\n")));
+      return source.spans.get(key);
+    }).sort();
+  };
 }
 
 export function filterReviewed(families, baseline, version, currentFamilies = families) {
