@@ -164,6 +164,8 @@ node scripts/nose-review.mjs scan /path/to/project
 Or ask: “Use `$nose-fix` to resolve the latest duplication report.”
 The skill refreshes evidence, refactors appropriate copies, independently records
 concrete reasons for intentional copies, and runs relevant tests and a final scan.
+The final scan is required after source edits, not after baseline-only decisions;
+acceptance and pre-push still revalidate their source evidence.
 Uncertain candidates remain unaccepted. Invoking the skill authorizes these
 decisions. Authorized agent-push recovery also invokes this workflow; merely
 displaying an unrelated report does not authorize source edits.

@@ -79,7 +79,7 @@ pushes; the authorized-push recovery below is the scoped exception.
 
 When a push the user requested fails with `NOSE_DUPLICATION_BLOCKED`, apply this
 workflow to that report without waiting for a separate cleanup request. After
-tests and the final scan, commit only scoped source fixes, preserve unrelated
+tests and any required final scan, commit only scoped source fixes, preserve unrelated
 index and worktree changes, and keep source-bound intentional decisions in the
 locally excluded `.nose-review/baseline.json`, then retry the same authorized push.
 The gate applies those decisions only when their current family fingerprints and
@@ -110,7 +110,10 @@ The command records member hashes so removing copies alone can be recognized as
 a reduction. Old decisions without member hashes still match exactly but cannot
 prove reductions; only re-record them after checking their current source.
 
-Run the skill scan again. Check repaired locations against the final families,
+Run the skill scan again if source changed after the last successful scan.
+Recording baseline decisions alone does not require another scan: acceptance
+revalidates source and Nose version, and pre-push checks the pushed snapshot.
+Check repaired locations against the final families,
 including changed family membership; disappearance of an old ID alone is not
 proof of removal. Confirm tests pass and no new unreviewed duplication was
 introduced by the refactor. Stop when scoped candidates are repaired, intentionally
