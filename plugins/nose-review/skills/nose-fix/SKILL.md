@@ -79,10 +79,12 @@ pushes; the authorized-push recovery below is the scoped exception.
 
 When a push the user requested fails with `NOSE_DUPLICATION_BLOCKED`, apply this
 workflow to that report without waiting for a separate cleanup request. After
-tests and the final scan, commit only your scoped fixes and intentional decisions,
-preserving unrelated index and worktree changes, then retry the same authorized
-push. Decisions must be committed: working-tree changes cannot exempt a pushed
-snapshot. Never force-push, bypass hooks, or blanket-accept to pass the gate.
+tests and the final scan, commit only scoped source fixes, preserve unrelated
+index and worktree changes, and keep source-bound intentional decisions in the
+locally excluded `.nose-review/baseline.json`, then retry the same authorized push.
+The gate applies those decisions only when their current family fingerprints and
+member hashes match the verified pushed snapshot. Never force-push, bypass hooks,
+or blanket-accept to pass the gate.
 
 After the initial rejected push, use at most two fix-and-retry cycles. If evidence
 is insufficient, candidate edits overlap another person's uncommitted work,

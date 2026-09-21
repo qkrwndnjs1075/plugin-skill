@@ -123,7 +123,7 @@ test('non-Git project needs no hook and repeated install updates payload without
   assert.equal(readFileSync(first.previousHook,'utf8'),original);
 });
 
-test('installation preserves local exclusions and ignores reports without hiding baseline decisions',t=>{
+test('installation preserves local exclusions and ignores all local review state',t=>{
   const f=fixture(t), exclude=join(f.repo,'.git/info/exclude');
   writeFileSync(exclude,'existing-local-rule\n');
   install(f.repo,f.source);
@@ -132,5 +132,5 @@ test('installation preserves local exclusions and ignores reports without hiding
   assert.equal(readFileSync(exclude,'utf8'),first);
   assert.match(first,/existing-local-rule/);
   assert.equal(spawnSync('git',['check-ignore','.nose-review/failures/run.json'],{cwd:f.repo}).status,0);
-  assert.equal(spawnSync('git',['check-ignore','.nose-review/baseline.json'],{cwd:f.repo}).status,1);
+  assert.equal(spawnSync('git',['check-ignore','.nose-review/baseline.json'],{cwd:f.repo}).status,0);
 });

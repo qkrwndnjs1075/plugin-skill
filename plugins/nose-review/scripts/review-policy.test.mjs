@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { filterRemoteExisting, filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
+import { filterChangedCandidates, filterRemoteExisting, filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
 import { scan } from "./review-runtime.mjs";
 
 function fixture(t) {
@@ -129,6 +129,12 @@ test("remote comparison permits existing families and reductions but blocks grow
   const grown = memberFamily("a", "a", "a", "b");
   const edited = memberFamily("a", "changed");
   assert.deepEqual(filterRemoteExisting([existing, reduced, grown, edited], [existing]), [grown, edited]);
+});
+
+test("push comparison keeps only families that touch a changed path", () => {
+  const changed = { locations: [{ file: "src/changed.ts" }, { file: "src/base.ts" }] };
+  const unchanged = { locations: [{ file: "src/other.ts" }, { file: "src/base.ts" }] };
+  assert.deepEqual(filterChangedCandidates([changed, unchanged], ["src/changed.ts"]), [changed]);
 });
 
 test("remote comparison fails closed on unverifiable membership", () => {

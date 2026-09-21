@@ -146,23 +146,24 @@ test('missing Nose blocks with an error record', t => {
   assert.equal(f.report().refs[0].status, 'error');
 });
 
-test('only pushed baselines apply; malformed baselines warn without hiding findings', t => {
+test('a safe local baseline applies to the pushed snapshot; malformed local policy fails closed', t => {
   const f = fixture(t);
   f.run();
   const report = f.report();
   const baseline = {schemaVersion:1, noseVersion:report.noseVersion, accepted:report.candidates.map(family => family.fingerprint), intentional:[]};
   writeFileSync(join(f.root, '.nose-review/baseline.json'), JSON.stringify(baseline));
-  f.run();
-  assert.ok(f.report().candidates.length > 0);
-  f.git('add', '.nose-review/baseline.json'); f.git('commit', '-qm', 'reviewed baseline');
-  assert.equal(f.run(f.line(f.git('rev-parse', 'HEAD'))).status,0);
+  assert.equal(f.run().status,0);
   assert.equal(f.report().candidates.length, 0);
   writeFileSync(join(f.root, '.nose-review/baseline.json'), JSON.stringify({...baseline, schemaVersion:900}));
-  f.git('add', '.nose-review/baseline.json'); f.git('commit', '-qm', 'unsupported baseline');
-  const run = f.run(f.line(f.git('rev-parse', 'HEAD')));
+  const run = f.run();
   assert.equal(run.status,2);
   assert.match(run.stderr, /Unsupported baseline schema/);
   assert.ok(f.report().candidates.length > 0);
+  rmSync(join(f.root, '.nose-review/baseline.json'));
+  symlinkSync(join(f.root, 'a.js'), join(f.root, '.nose-review/baseline.json'));
+  const unsafe = f.run();
+  assert.equal(unsafe.status, 2);
+  assert.match(unsafe.stderr, /Baseline must be a regular file/);
 });
 
 test('report directory symlink is rejected and export-ignore does not produce false clean', t => {
@@ -182,7 +183,7 @@ test('report directory symlink is rejected and export-ignore does not produce fa
   assert.equal(f.report().refs[0].status, 'error');
 });
 
-for(const resolution of ['refactor','intentional']) test(`real push is blocked until committed ${resolution} resolves findings`,t=>{
+for(const resolution of ['refactor','intentional']) test(`real push is blocked until ${resolution} resolves findings`,t=>{
   const f=fixture(t);
   const remote=join(f.root,'remote.git');
   f.git('init','--bare','-q',remote);
@@ -199,16 +200,19 @@ for(const resolution of ['refactor','intentional']) test(`real push is blocked u
     assert.notEqual(push().status,0); // Uncommitted repair cannot unblock a pushed tree.
     f.git('add','b.js');
   } else {
+    writeFileSync(join(f.root,'.git/info/exclude'),'/.nose-review/\n');
     const fingerprint=f.report().candidates[0].fingerprint;
     execFileSync(process.execPath,[new URL('./review-policy.mjs',import.meta.url).pathname,'accept',f.root,fingerprint,'Independent deployment fixture'],{cwd:f.root});
-    assert.notEqual(push().status,0);
-    f.git('add','.nose-review/baseline.json');
+    assert.equal(f.git('check-ignore','.nose-review/baseline.json'),'.nose-review/baseline.json');
   }
-  f.git('commit','-qm','resolve gate');
+  if(resolution==='refactor') f.git('commit','-qm','resolve gate');
   const accepted=push();
   assert.equal(accepted.status,0,accepted.stderr);
   assert.equal(f.report().gateStatus,'passed');
   assert.equal(f.git('--git-dir',remote,'rev-parse','refs/heads/main'),f.git('rev-parse','HEAD'));
+  if(resolution==='intentional') {
+    assert.notEqual(spawnSync('git',['--git-dir',remote,'cat-file','-e','main:.nose-review/baseline.json']).status,0);
+  }
 });
 
 test('real push catches secrets in earlier outgoing commits and retains sanitized failure after success',t=>{

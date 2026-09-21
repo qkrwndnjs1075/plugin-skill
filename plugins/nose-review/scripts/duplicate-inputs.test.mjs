@@ -34,7 +34,9 @@ test('unchanged duplicate inputs use Git identity while secrets still gate a rea
   const beforeBaseline = git('rev-parse', 'HEAD');
   mkdirSync(join(root, '.nose-review'), {recursive:true});
   writeFileSync(join(root, '.nose-review/baseline.json'), '{}');
-  assert.equal(sameDuplicateInputs(root, [beforeBaseline, commitAll(git)]), false);
+  git('add', '-f', '.nose-review/baseline.json');
+  git('commit', '-qm', 'tracked legacy baseline');
+  assert.equal(sameDuplicateInputs(root, [beforeBaseline, git('rev-parse', 'HEAD')]), false);
   const beforeSymlink = git('rev-parse', 'HEAD');
   symlinkSync('app.js', join(root, 'alias.md'));
   assert.equal(sameDuplicateInputs(root, [beforeSymlink, commitAll(git)]), false);

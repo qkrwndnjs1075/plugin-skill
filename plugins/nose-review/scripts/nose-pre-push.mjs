@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { git, projectRoot, scan, sameDuplicateInputs } from './review-runtime.mjs';
-import { filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
+import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { scanCommitSecrets } from './commit-secrets.mjs';
 import { saveFailure } from './failure-history.mjs';
@@ -101,13 +101,16 @@ function archivedScan(root, sha, operation, materializeSymlinks=false) {
   }
 }
 
-function baselineCandidates(directory, result, warnings, reductions) {
+function baselineAt(directory, source, result, warnings, reductions) {
   const review = lstatSync(join(directory, '.nose-review'), {throwIfNoEntry:false});
-  if (!review) return {candidates:result.families, hasBaseline:false};
-  if (!review.isDirectory()) { warnings.push('Pushed baseline directory is unsafe; baseline ignored'); return {candidates:result.families, hasBaseline:true}; }
+  if (!review) return null;
+  if (!review.isDirectory()) {
+    warnings.push(`${source} baseline directory is unsafe; baseline ignored`);
+    return {candidates:result.families, hasBaseline:true, baselineSource:source.toLowerCase()};
+  }
   const path = join(directory, '.nose-review', 'baseline.json');
   const stat = lstatSync(path, {throwIfNoEntry:false});
-  if (!stat) return {candidates:result.families, hasBaseline:false};
+  if (!stat) return null;
   try {
     if (!stat.isFile()) throw new Error('Baseline must be a regular file');
     const baseline = JSON.parse(readFileSync(path, 'utf8'));
@@ -115,11 +118,18 @@ function baselineCandidates(directory, result, warnings, reductions) {
       throw new Error('Unsupported baseline schema or Nose version');
     }
     reductions.push(...reviewedReductions(result.families,baseline,result.noseVersion));
-    return {candidates:filterReviewed(result.families, baseline, result.noseVersion), hasBaseline:true};
+    return {candidates:filterReviewed(result.families, baseline, result.noseVersion), hasBaseline:true,
+      baselineSource:source.toLowerCase()};
   } catch (error) {
-    warnings.push(`${error instanceof SyntaxError?'Invalid baseline JSON':error.message}; pushed baseline ignored`);
-    return {candidates:result.families, hasBaseline:true};
+    warnings.push(`${error instanceof SyntaxError?'Invalid baseline JSON':error.message}; ${source.toLowerCase()} baseline ignored`);
+    return {candidates:result.families, hasBaseline:true, baselineSource:source.toLowerCase()};
   }
+}
+
+function baselineCandidates(snapshotDirectory, root, result, warnings, reductions) {
+  return baselineAt(snapshotDirectory, 'Pushed', result, warnings, reductions)
+    ?? baselineAt(root, 'Local', result, warnings, reductions)
+    ?? {candidates:result.families, hasBaseline:false};
 }
 
 function relativeFamilies(families, directory) {
@@ -201,14 +211,18 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       }
       const local = archivedScan(root, localSha, (directory, files) => {
         const result=scan(directory, files);
-        const policy=baselineCandidates(directory, result, record.warnings, record.reductions);
+        const policy=baselineCandidates(directory, root, result, record.warnings, record.reductions);
         return {noseVersion:result.noseVersion, families:result.families,
-          candidates:policy.candidates, hasBaseline:policy.hasBaseline, directory};
+          candidates:policy.candidates, hasBaseline:policy.hasBaseline,
+          baselineSource:policy.baselineSource, directory};
       });
+      if(local.baselineSource) record.baselineSource=local.baselineSource;
       if (comparisonSha) {
         const remote=archivedScan(root, comparisonSha, (directory, files) => scan(directory, files));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
         local.candidates=filterRemoteExisting(local.candidates,remote.families);
+        const changedFiles=git(root,['diff','--name-only','-z',comparisonSha,localSha,'--']).split('\0').filter(Boolean);
+        local.candidates=filterChangedCandidates(local.candidates,changedFiles);
         record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};
       }
       noseVersion = local.noseVersion;
@@ -236,7 +250,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
     renameSync(temporary, join(review, 'report.json'));
   } finally { rmSync(temporary, {force:true}); }
   if(refs.some(ref=>ref.secrets?.status==='blocked')) advise('NOSE_SECRETS_BLOCKED: remove credentials from outgoing commits; never print secret values or accept them as duplication. Already exposed credentials require owner rotation. Do not bypass the hook.');
-  if(refs.some(ref=>ref.candidates.length)) advise('NOSE_DUPLICATION_BLOCKED: run $nose-fix, verify behavior, commit fixes or justified intentional decisions, then retry the authorized push. Do not bypass the hook.');
+  if(refs.some(ref=>ref.candidates.length)) advise('NOSE_DUPLICATION_BLOCKED: run $nose-fix, verify behavior, commit source fixes or record source-bound intentional decisions locally, then retry the authorized push. Do not bypass the hook.');
   if(exitCode===2) advise('NOSE_CHECK_UNAVAILABLE: restore valid scan inputs/tools before retrying. This is not a clean scan.');
   return exitCode;
 }

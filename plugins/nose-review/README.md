@@ -42,14 +42,16 @@ arguments and standard input. Its nonzero exit still rejects the push. If it
 passes, Nose inspects each pushed local commit in a temporary snapshot, without
 checking out branches or changing the index or working tree.
 
-Reviewed fingerprints and intentional decisions in the **pushed**
-`.nose-review/baseline.json` remain the durable source of review decisions. When
-the pushed ref already exists, the hook also scans the remote tip as a comparison
-base after applying those decisions: unchanged families and strict member
-reductions pass, while new families, growth, and edited membership block. This
-comparison does not record or imply review, and it never writes a baseline.
-Content fingerprints exclude file paths, line offsets and trailing whitespace.
-Uncommitted decisions do not affect a push check.
+Reviewed fingerprints and intentional decisions in the local, Git-excluded
+`.nose-review/baseline.json` remain the durable source of review decisions for
+that checkout. The hook applies them to the verified pushed snapshot, so a stale
+decision cannot hide changed source. A pushed baseline from an older setup takes
+precedence while it remains tracked. When the pushed ref already exists, the hook
+also scans the remote tip as a comparison base after applying those decisions:
+unchanged families and strict member reductions pass, while new families, growth,
+and edited membership block. This comparison does not record or imply review, and
+it never writes a baseline. Content fingerprints exclude file paths, line offsets
+and trailing whitespace.
 
 New intentional decisions include verified per-member hashes. When a reviewed
 family disappears and the remaining members are a strict sub-multiset of it,
@@ -165,9 +167,9 @@ full-project scan. A manual scan reads current working files, which may differ
 from the commit inspected by pre-push. Treat stored commit findings as candidates
 and refresh before editing or accepting them.
 
-Commit `.nose-review/baseline.json` to share intentional decisions. Add
-`.nose-review/report.json` to the target project's ignore file: it is generated
-output. Acceptance rejects stale source spans or incompatible Nose versions.
+Keep `.nose-review/` in the checkout's Git exclude file. Its baseline records
+local source-bound review decisions, while reports and failure history are
+generated evidence. Acceptance rejects stale source spans or incompatible Nose versions.
 Decisions are serialized and the report and source are revalidated after acquiring
 the lock. Locks owned by an exited process are recovered. Legacy ownerless locks
 are recovered after 30 seconds; an active or unverifiable owner is never evicted.

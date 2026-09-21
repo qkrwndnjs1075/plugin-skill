@@ -73,6 +73,13 @@ export function filterRemoteExisting(families, remoteFamilies) {
       && !verifiableRemote.some((remote) => strictSubmultiset(family.memberHashes, remote.memberHashes))));
 }
 
+export function filterChangedCandidates(families, changedFiles) {
+  const changed = new Set(changedFiles);
+  return families.filter((family) =>
+    family.locations.some((location) => changed.has(location.file)),
+  );
+}
+
 function strictSubmultiset(current, reviewed) {
   if (current.length >= reviewed.length) return false;
   const remaining = new Map();

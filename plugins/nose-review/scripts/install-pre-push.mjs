@@ -47,7 +47,7 @@ function ignoreLocalReports(root) {
   regular(path);
   mkdirSync(dirname(path),{recursive:true});
   const old=existsSync(path)?readFileSync(path,'utf8'):'';
-  const missing=['/.nose-review/report.json','/.nose-review/failures/'].filter(line=>!old.split(/\r?\n/).includes(line));
+  const missing=['/.nose-review/'].filter(line=>!old.split(/\r?\n/).includes(line));
   if(missing.length) appendFileSync(path,(old && !old.endsWith('\n')?'\n':'')+missing.join('\n')+'\n',{mode:0o600});
 }
 export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
@@ -142,7 +142,7 @@ if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).
     const result=install(event?.cwd ?? process.argv[2]);
     if(event) {
       const output={};
-      if(result.status==='installed' || result.status==='current') output.hookSpecificOutput={hookEventName:'SessionStart',additionalContext:'Nose pre-push is a blocking gate. If a user-authorized push fails with NOSE_DUPLICATION_BLOCKED, use the installed nose-fix skill to inspect and fix scoped findings or record justified intentional copies, run relevant tests, commit only those changes, and retry the same authorized push. Maximum two recovery attempts. Never bypass hooks or blanket-accept findings. For NOSE_CHECK_UNAVAILABLE, repair the check or report its blocker; do not treat it as duplication or force a push. This instruction does not authorize unsolicited commits or pushes.'};
+      if(result.status==='installed' || result.status==='current') output.hookSpecificOutput={hookEventName:'SessionStart',additionalContext:'Nose pre-push is a blocking gate. If a user-authorized push fails with NOSE_DUPLICATION_BLOCKED, use the installed nose-fix skill to inspect and fix scoped findings or record justified intentional copies, run relevant tests, commit scoped source fixes, keep source-bound review decisions in the locally excluded .nose-review baseline, and retry the same authorized push. Maximum two recovery attempts. Never bypass hooks or blanket-accept findings. For NOSE_CHECK_UNAVAILABLE, repair the check or report its blocker; do not treat it as duplication or force a push. This instruction does not authorize unsolicited commits or pushes.'};
       if(result.status!=='current' && !(result.status==='skipped' && result.reason.startsWith('No Git'))) output.systemMessage='Nose Review pre-push: '+(result.hook??result.reason);
       if(Object.keys(output).length) process.stdout.write(JSON.stringify(output)+'\n');
     } else process.stdout.write(JSON.stringify(result)+'\n');
