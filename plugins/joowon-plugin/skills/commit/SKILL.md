@@ -40,6 +40,21 @@ For example, an order-creation feature might yield these subjects, adapted to th
 
 Each describes what that commit introduces. Avoid a broad subject such as `implement order feature` when separable responsibilities exist. Do not combine equivalent layers across independent domains into one `add entities` commit.
 
+## Write reviewable commit messages
+
+Write for a reviewer who has not read the conversation. Describe only the changes included in this commit. Choose commit boundaries before writing the message; a detailed body does not justify combining independent responsibilities.
+
+- Use a short subject naming the concrete behavior or responsibility.
+- For non-trivial changes, explain the problem and resulting behavior in the opening paragraph. Include important rejection conditions, fallback behavior, or invariants when they affect correctness.
+- Add concise bullets for implementation locations only when they help the reviewer navigate the change. Explain each location's role; do not repeat a file list already visible in the diff.
+- Record relevant verification actually performed. Distinguish tests run on this commit from tests run only on the final combined tree. Never claim later verification for an earlier commit.
+- Link related issues and explain their relationship. Avoid shorthand such as "core-only restart" that requires conversation history.
+- State intentionally deferred work when its absence could be mistaken for an omission. Do not include an unrelated future-work list.
+- Match the repository's message language and conventions, honoring any explicit user preference.
+- Scale detail to the change: simple commits may need only a subject. Do not require fixed sections or server/web/docs/test bullets.
+
+For a substantial change, the usual flow is subject, problem and resulting behavior, useful review pointers and verification, then relevant issue context and deferred scope. Omit parts that add no useful information.
+
 ## Execute and verify
 
 Keep the working partition current as the actual hunks are staged; a sound plan does not certify the resulting commits. Communicate meaningful progress without making routine boundary choices an approval gate. If unrelated staged changes would contaminate a commit, isolate the requested work using a separate index or temporary worktree and preserve the original staging deliberately. Do not clear the user's index, reset, or stash their work as a shortcut.
