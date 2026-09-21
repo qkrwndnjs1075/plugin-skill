@@ -182,9 +182,10 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
-- Nose and Gitleaks each have a 45-second limit per scan; the dispatcher bounds the complete
-  invocation to 240 seconds so an existing-ref push can include both local and remote Nose
-  snapshots. A failure/timeout blocks and is reported.
+- Nose has a 180-second limit per immutable snapshot and writes its JSON to a private temporary
+  file instead of buffering the whole report in the hook process. Gitleaks keeps a 45-second
+  limit per scan. The dispatcher bounds the complete invocation to 420 seconds so an existing-ref
+  push can include both local and remote Nose snapshots. A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

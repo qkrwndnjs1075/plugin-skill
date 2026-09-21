@@ -85,14 +85,14 @@ if(existsSync(original) && (statSync(original).mode & 0o111)) {
  const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});
  if(result.error || result.status!==0) process.exit(result.status || 1);
 }
-const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','pipe'],encoding:'utf8',timeout:240000,maxBuffer:64*1024*1024});
+const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','pipe'],encoding:'utf8',timeout:420000,maxBuffer:64*1024*1024});
 if(check.stderr) process.stderr.write(check.stderr);
 const expected=check.status===0
  || (check.status===1 && /NOSE_(?:DUPLICATION|SECRETS)_BLOCKED/.test(check.stderr??''))
  || (check.status===2 && /NOSE_CHECK_UNAVAILABLE/.test(check.stderr??''));
 if(check.error || check.signal || !expected) {
  console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete');
- try { const {saveFailure}=await import('./failure-history.mjs'); console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed, returned an unexpected status, or exceeded 240 seconds'})); }
+ try { const {saveFailure}=await import('./failure-history.mjs'); console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed, returned an unexpected status, or exceeded 420 seconds'})); }
  catch { console.error('Failure history could not be saved'); }
  process.exit(2);
 }

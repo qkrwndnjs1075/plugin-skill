@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync, lstatSync, mkdtempSync, renameSync, realpathSync, existsSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, extname, dirname, parse } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { memberHashesForFamily, hash } from './review-policy.mjs';
@@ -114,9 +114,23 @@ export function scan(root, verifiedFiles) {
   const cache = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
     const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
-    const result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{cwd:root,encoding:'utf8',timeout:45000,maxBuffer:64*1024*1024});
-    if (result.status!==0) throw new Error('Nose scan failed or exceeded 45 seconds');
-    const report = JSON.parse(result.stdout);
+    const reportPath=join(cache,'report.json');
+    const reportDescriptor=openSync(reportPath,'wx',0o600);
+    let result;
+    try {
+      result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{
+        cwd:root,
+        encoding:'utf8',
+        timeout:180000,
+        maxBuffer:8*1024*1024,
+        stdio:['ignore',reportDescriptor,'pipe'],
+      });
+    } finally {
+      closeSync(reportDescriptor);
+    }
+    if (result.error?.code==='ETIMEDOUT' || result.signal) throw new Error('Nose scan exceeded 180 seconds');
+    if (result.status!==0) throw new Error('Nose scan failed');
+    const report = JSON.parse(readFileSync(reportPath,'utf8'));
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
     const families = report.families.flatMap(family=>{
       if (!Array.isArray(family?.locations)) throw new Error('Family must contain source locations.');

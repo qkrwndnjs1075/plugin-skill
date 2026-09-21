@@ -25,8 +25,8 @@ test('installation chains existing hook with identical args/stdin and survives r
   assert.equal(first.status,'installed');
   const release=readdirSync(join(f.hooks,'.nose-review')).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
   const dispatcher=readFileSync(join(f.hooks,'.nose-review',release,'dispatch.mjs'),'utf8');
-  assert.match(dispatcher,/timeout:240000/);
-  assert.match(dispatcher,/exceeded 240 seconds/);
+  assert.match(dispatcher,/timeout:420000/);
+  assert.match(dispatcher,/exceeded 420 seconds/);
   const before=statSync(first.hook);
   assert.equal(install(f.repo,f.source).status,'current');
   assert.equal(statSync(first.hook).mtimeMs,before.mtimeMs);

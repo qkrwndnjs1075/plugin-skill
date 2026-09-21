@@ -67,3 +67,17 @@ test('scan ignores an ungrounded Nose location whose span exceeds its file', t=>
   try { assert.deepEqual(scan(repo).families,[]); }
   finally { process.env.PATH=previous; }
 });
+
+test('scan accepts valid Nose JSON larger than the child-process output buffer', t=>{
+  const fixture=mkdtempSync(join(tmpdir(),'nose-large-report-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const repo=join(fixture,'repo'),bin=join(fixture,'bin');
+  mkdirSync(repo);mkdirSync(bin);execFileSync('git',['init','-q'],{cwd:repo});
+  writeFileSync(join(repo,'app.js'),'export const answer = 42;\n');
+  execFileSync('git',['add','.'],{cwd:repo});
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+
+    "if(process.argv.includes('--version')) console.log('nose fixture'); else process.stdout.write(JSON.stringify({families:[],padding:'x'.repeat(65*1024*1024)}));\n",{mode:0o700});
+  const previous=process.env.PATH;process.env.PATH=bin+':'+previous;
+  try { assert.deepEqual(scan(repo).families,[]); }
+  finally { process.env.PATH=previous; }
+});
