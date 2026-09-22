@@ -1,110 +1,61 @@
 ---
 name: commit
-description: Split requested changes into responsibility-scoped local commits and execute them safely. Use when asked to commit work, split pending changes, or repartition unpublished local commits; not for pushing, PR creation, or general history investigation.
+description: Create small, complete local commits from requested changes. Use when asked to commit work, split pending changes, or repartition unpublished local commits; not for pushing, PR creation, or general history investigation.
 ---
 
 # Commit
 
-Create small, complete commits, each expressing one logical change with its direct evidence. Derive boundaries from the diff before naming or counting commits. Atomicity means HEAD plus the commit forms a coherent working step without later repairs; it does not require cherry-picking without prerequisites. Use the boundary decision below throughout inventory, review, and staging. Decide routine boundaries without asking the user to approve the split.
+Read the diff, group logical changes, inspect each staged diff, and commit. Keep routine boundary decisions within this flow. This skill does not require a partition table, a separate reviewer, approval verdicts, re-review, or a per-commit evidence ledger. Follow any additional checks explicitly required by the user or repository.
 
-Treat committing already-verified changes as packaging work. The default path is diff inspection, one bounded partition review when needed, precise staging, required hooks and commit readback. Do not create validation worktrees, install dependencies, start test runtimes or launch a second product review merely because commits are being split.
+## Scope and source reads
 
-## Establish scope
+Inspect repository instructions, branch/upstream, staged and unstaged changes, relevant untracked files, and recent commit subjects. Preserve unrelated edits and their staged state. Loading the skill alone does not authorize Git mutations. Honor preview-only requests.
 
-Read the repository instructions and Git conventions, current branch, staged and unstaged diffs, relevant untracked contents, and recent commit subjects. Use the repository's message language, format, branch rules, and issue policy. Do not impose one project's issue numbering or release workflow elsewhere.
+A commit request authorizes local commits. Repartitioning existing commits requires an explicit request for the identified range; published-history rewriting, pushing, and PR publication require their own authorization. Existing authorization for those actions remains valid.
 
-Account for pre-existing edits by purpose. Requested work may have been dirty before the session; unrelated work stays untouched, including its staged state. Loading this skill is not itself an instruction to commit. An explicit commit request authorizes new local commits, not pushing, PR creation, or rewriting existing history. An explicit request to repartition or fix existing commits authorizes rewriting only the identified unpublished local range; never rewrite published history without separate authorization. Honor narrower requests such as a split preview only.
+Read the actual diff and reuse those contents. Read callers or HEAD/index versions only when needed to understand a change or resolve a specific intermediate dependency. Batch independent reads; do not repeatedly dump every file's base and final contents after already understanding the diff. Refresh affected reads when the source changes.
 
-## 1. Inventory changes before naming commits
+## Choose boundaries
 
-Read the actual diff and relevant callers. List each changed behavior or ownership contract, with the paths and hunks implementing it. Include changes within a single file and supporting contract, persistence, service, and caller responsibilities where they exist. Do not start by assigning broad feature titles to file lists.
+Choose boundaries before subjects or commit counts:
 
-Record additions/deletions and files touched as review-cost signals, not thresholds. A shared owner or feature is not proof of cohesion; different files, fields, or test cases are not proof of independence.
+- **Split distinct changes.** Identify a useful result for each group. Different files, fields, tests, or feature names alone do not establish independence; a shared owner or incident alone does not establish cohesion.
+- **Keep one contract complete.** Keep its implementation, necessary caller adaptations, direct regression tests, required generated output, and essential usage documentation together. Independent existing-behavior tests, refactoring, or broader recovery coverage may stand alone. Revertability is a clue, not a reason to separate a fix from its test.
+- **Order prerequisites first.** An import establishes order, not automatic cohesion. Avoid a snapshot that requires later repairs. If a proposed split loses necessary context or breaks a contract, adjust the boundary or order.
+- **Stop at reviewable units.** Use size as a signal to examine scope, not a quota. Reconsider a boundary for a concrete hunk, dependency, or user constraint; do not change the count merely to agree with pressure for more or fewer commits.
 
-A small correction implementing one logical change can proceed directly to staging after a concise boundary check. Use the next two gates when the inventory contains multiple logical changes or uncertain boundaries, including during a requested repartition. Several assertions or review questions can support one contract; they do not automatically imply several commits.
+For example, one runtime contract correction across two callers may stay together, while separate persisted-state recovery coverage or a CI execution-policy change may stand alone. Judge the actual hunks rather than copying an example's partition.
 
-## 2. Record the partition and justify boundaries
+Explain a non-obvious boundary briefly in progress output when useful. Do not create an approval checkpoint for routine grouping. If intent or scope is genuinely ambiguous, clarify that specific issue.
 
-Before staging, record the partition in an existing task note or concise progress artifact. Keep this working record out of commits unless requested. Each row must contain:
+## Stage, check, commit
 
-| Group | Logical change and resulting behavior | Paths/hunks and estimated changed lines | Prerequisites | Smallest relevant check | Boundary rationale |
-| --- | --- | --- | --- | --- | --- |
+Stage explicit paths or hunks for one logical change, not `git add .` or `git add -A`. Read the complete staged diff, run `git diff --cached --check`, and confirm:
 
-Assign every in-scope inventory item to one group; identify unrelated work separately. A whole-file entry is sufficient only when all its changes have that owner. Keep direct regressions, required generated output, and mandatory usage documentation with their owner. Independent documentation, tool operations, and tests of unrelated behaviors must not become a miscellaneous final commit.
+- every hunk belongs to the intended change, with no unrelated or sensitive material;
+- necessary imports, fixtures, generated inputs, and callers exist in HEAD plus the index, not only in later working-tree changes;
+- the message describes the staged change.
 
-Existing-behavior tests, test refactoring, and integration infrastructure may form separate useful changes. Each proposed snapshot must contain its prerequisites and avoid known failures or unused scaffolding. This is a completeness requirement, not a command to execute every snapshot: use the conditional validation rules in section 4 and label source inspection separately from executed tests.
+Prefer normal path staging or partial staging with `git add -p` / `git apply --cached`. Do not routinely reconstruct every file as per-commit `.txt` and formatted copies. If overlapping edits require an intermediate blob, limit it to the affected path, keep task-owned scratch files out of commits, and remove them after use. Direct index updates are a fallback, not the default for every file. Never clean up another running task's scratch files.
 
-### Boundary decision
+If unrelated staged edits would be included, preserve the user's index and isolate the requested commit, for example with a separate index. Do not reset, clear the index, or stash unrelated work as a shortcut. If the staged contents change after inspection, inspect the affected diff again before committing.
 
-- **Split:** identify two distinct changes, their exact hunks, and the useful result of each. Independent revertability supports this judgment but does not establish it alone; deleting a direct regression separately from its fix is not a useful boundary.
-- **Keep together:** identify the single contract and how its implementation, callers, and direct evidence establish it. If splitting would obscure that contract, name the context that would be lost; a broad claim of shared purpose is insufficient. A bad split need not break the build.
-- **Order:** place prerequisites before consumers. An import establishes a dependency, not automatic cohesion. Where combining is necessary to avoid an intermediate failure, cite the dependency and explain why ordering or smaller hunks cannot preserve the contract.
-- **Stop:** retain the boundary once each group has a distinct purpose, a complete snapshot, and sufficient context for review. Reopen it for a specific hunk, dependency, or scope correction, not simply to increase or decrease the count. If evidence is insufficient, mark the boundary unresolved rather than invent a precise count.
+Reuse verification that still covers the same content, dependencies, configuration, and scope. A new commit ID or partition alone does not require another QA cycle. Run repository-required checks and hooks. Never bypass a failed hook or modify unrelated code merely to finish committing.
 
-For example, the same runtime contract correction across two callers may remain together; separate persisted-state recovery coverage may stand alone. A two-line CI policy change may also stand alone. Apply the decision to their actual hunks rather than treating these examples as prescribed partitions. Do not invent scaffolding, tests, or product changes to manufacture extra commits in a history-only repartition. Choose subjects after the boundaries hold.
+Check intermediate dependencies from source by default. Run a targeted intermediate check only when explicitly required or when a named uncertainty remains after inspection; use code and dependencies from that snapshot. Do not create validation worktrees, install dependencies, or start test runtimes merely to package verified changes. Test discovery and import-only runs may still be expensive. Report reused final-tree checks separately from any intermediate snapshots actually executed.
 
-## 3. Review the partition before staging
+Write messages in the repository's language and style. Use a concrete subject; add a short problem/result explanation, relevant checks and issue context when useful. Do not fill a template with file lists, session history, or verification that did not occur.
 
-For an inventory containing multiple logical changes or uncertain boundaries, review the partition before staging. Honor a no-subagent instruction by using the self-review fallback below; otherwise use one fresh-context, read-only subagent through the available native subagent tool. Provide the user's scope, repository rules, raw diff, relevant caller paths, inventory, proposed groups and dependency evidence. Give access to source; do not provide an expected verdict. The reviewer must not edit, commit, or spawn other reviewers.
+Commit, then inspect the resulting commit's paths and diff summary against the staged change. Inspect unexpected differences before continuing. At the end, report commit hashes and purposes, applicable checks and limits, and remaining work. Continue to a push or PR only when separately authorized.
 
-Keep this review confined to commit boundaries and specific dependency edges. It must not run tests, install dependencies, create worktrees, perform whole-project QA, or repeat a product/security review. While it runs, prepare messages and selective patches; wait for its verdict before staging. Reuse a partition verdict already covering the same inventory and boundaries.
+## When repartitioning existing commits
 
-Apply the boundary decision in section 2 in both directions, including the largest group. Record hunk-level evidence for a supported split or combination and check prerequisite order. Reuse those same criteria when challenged; an acceptable result may retain the proposed count. A claimed improvement in partition quality needs actual before/after diff evidence, not a higher commit count or a format-validator pass.
+Preserve a recovery ref and the original final tree for the authorized range. Reconstruct separately without overwriting unrelated work, inspect prerequisite order, and verify exact final-tree equality before moving the original branch. Do not alter product content or invent scaffolding to make a history-only split easier. Execute intermediate snapshots only under the conditions above.
 
-The result must be `APPROVE`, `REPARTITION`, or `INCONCLUSIVE`, with evidence for the verdict. `APPROVE` names the checked boundaries and dependencies; `REPARTITION` identifies the separable behaviors or broken dependency and proposes a corrected boundary/order. Incorporate corrections and obtain a fresh review of the changed groups before staging; unaffected reviewed groups need not be re-reviewed. An acknowledgment, missing result or unsupported approval is not a pass. Do not commit affected groups while findings remain unresolved.
+## Rationale
 
-If the user prohibits subagents or the harness has no delegation tool, perform a separate counterexample pass yourself and label it self-reviewed. This is an explicit fallback, not independent approval; keep the same evidence and stop conditions. Resolve routine findings without another user approval request. A genuine ambiguity in intended behavior or authorization may require clarification.
+These are supporting sources, not required reading on every invocation:
 
-Retain the reviewed groups and verdict with the partition record. Material changes to behavior, scope, or dependencies invalidate review of the affected groups. Cosmetic message edits do not.
-
-## Write reviewable commit messages
-
-Write for a reviewer who has not read the conversation. Describe only the changes included in this commit. Choose commit boundaries before writing the message; a detailed body does not justify combining independent responsibilities.
-
-- Use a short subject naming the concrete behavior or responsibility.
-- For non-trivial changes, explain the problem and resulting behavior in the opening paragraph. Include important rejection conditions, fallback behavior, or invariants when they affect correctness.
-- Add concise bullets for implementation locations only when they help the reviewer navigate the change. Explain each location's role; do not repeat a file list already visible in the diff.
-- Record relevant verification actually performed. Distinguish tests run on this commit from tests run only on the final combined tree. Never claim later verification for an earlier commit.
-- Link related issues and explain their relationship. Avoid shorthand such as "core-only restart" that requires conversation history.
-- State intentionally deferred work when its absence could be mistaken for an omission. Do not include an unrelated future-work list.
-- Match the repository's message language and conventions, honoring any explicit user preference.
-- Scale detail to the change: simple commits may need only a subject. Do not require fixed sections or server/web/docs/test bullets.
-
-For a substantial change, the usual flow is subject, problem and resulting behavior, useful review pointers and verification, then relevant issue context and deferred scope. Omit parts that add no useful information.
-
-## 4. Reconcile the staged diff, then commit
-
-Keep the working partition current as the actual hunks are staged; a sound plan does not certify the resulting commits. Communicate meaningful progress without making routine boundary choices an approval gate. If unrelated staged changes would contaminate a commit, isolate the requested work using a separate index or temporary worktree and preserve the original staging deliberately. Do not clear the user's index, reset, or stash their work as a shortcut.
-
-Stage explicit paths or hunks for one reviewed group or the small single-change correction, never `git add .` or `git add -A`. Before each commit, read the complete `git diff --cached`, run `git diff --cached --check`, and check sensitive/generated material. Record the group or simple correction, current HEAD, staged tree from `git write-tree`, and the reconciliation result. A short inline record suffices for a simple correction; no partition table or subagent is needed.
-
-- every staged hunk belongs to this group; no neighboring responsibility was pulled in by staging a whole file;
-- all changes necessary for this group's contract are present, and its prerequisites are already in HEAD;
-- imports, fixtures and checks refer to HEAD plus this staged tree, not later working-tree changes;
-- the subject describes the actual staged logical change and its boundary rationale still holds under section 2;
-- the actual changed-line count, touched files, and behavior still match the partition; unexpectedly broad test or setup hunks trigger another boundary check.
-
-A tree hash identifies the reviewed snapshot; it does not prove semantic cohesion. An unmapped hunk, missing prerequisite, or newly discovered responsibility stops this commit. Correct the staging, or return affected groups to partition review if their boundaries changed. Any index change after reconciliation requires reconciliation again. Only commit the reconciled tree, then compare the actual commit's parent and tree with that record; a mismatch stops later commits until resolved within the authorized scope.
-
-Check intermediate dependencies statically by default: inspect the relevant HEAD/index versions, imports, exported symbols, fixtures and generated inputs. A test added in one group must not depend on a symbol introduced only in a later group. Record source-inspected dependencies as such; do not claim executed tests or independently buildable commits from that inspection.
-
-Reuse existing verification when the tested files, relevant dependencies, configuration and test scope still cover the delivered content. New commit IDs or different grouping alone do not invalidate that evidence. An unresolved failure or actual source/configuration change needs its affected check; repository-required hooks remain mandatory.
-
-Execute an intermediate snapshot only when the user or repository explicitly requires it, or a named dependency risk cannot be resolved by source inspection. State the exact uncertainty and smallest check first. Prefer an already-available targeted check or small export over another full checkout and dependency installation. Test discovery, import-only runs and filters matching no cases can still initialize a large runtime; they are not automatically cheap or required.
-
-If an isolated execution is necessary, ensure code and dependencies resolve to that snapshot and record its identity, command, result and limits. On failure, repair the prerequisite order or hunks before broadening a group. Do not proceed past a known broken intermediate contract or rely on a later commit to repair it. Apply the same conditional execution rule to repartitioned history; there is no per-commit execution loop by default.
-
-Do not bypass hooks or modify unrelated failing code to finish a commit. Preserve remaining work and report a blocker outside scope. Report reused final-content verification separately from any intermediate commits actually tested; do not claim every commit was independently tested when only the final content was verified. Honor a user's instruction to skip repeat validation without reopening it as an approval question.
-
-For an authorized repartition of existing local commits, retain a recovery ref and record the original final tree. Reconstruct the history separately, then verify the intermediate snapshots and exact final-tree equality before moving the original branch. Do not change the final content merely to make the split easier. If a content fix is authorized and necessary, record it separately and do not describe the result as history-only. Preserve unrelated work and remove only known task-owned scratch resources.
-
-Final-tree equality proves content preservation only. Require it together with reviewed boundaries and source-inspected dependency order before moving the original branch. Execute intermediate snapshots only under the conditions above, and distinguish those executed checks from static inspection in the report.
-
-At the end, reconcile inventory items against actual commits and remaining staged, unstaged and untracked work. Extra later commits do not repair an earlier mixed boundary. Report hashes with their responsibilities, review method, checks and limitations, and anything left uncommitted. Stop after the authorized local commits; pushing, PR publication and published-history rewriting need their own authorization.
-
-## Boundary references
-
-- [GitHub: Write Better Commits, Build Better Projects](https://github.blog/developer-skills/github/write-better-commits-build-better-projects/): split distinct changes even when short; combine incomplete fragments into stable, atomic commits.
-- [Google: Small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html): small self-contained review units with related tests; avoid splitting so finely that implications become difficult to understand. CLs are review units, not necessarily individual Git commits; line-count examples are guidance, not limits.
-- [Git: SubmittingPatches](https://git-scm.com/docs/SubmittingPatches): logically separate commits; a long explanation can signal a missing boundary.
-- [Linux: Separate your changes](https://cdn.kernel.org/doc/html/latest/process/submitting-patches.html#separate-your-changes): understandable, verifiable patches may depend on earlier patches while preserving working intermediate states.
+- [GitHub: Write Better Commits, Build Better Projects](https://github.blog/developer-skills/github/write-better-commits-build-better-projects/): small scope and complete commits.
+- [Google: Small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html): related tests and understandable review units; CLs are not necessarily individual Git commits.
+- [Linux: Separate your changes](https://cdn.kernel.org/doc/html/latest/process/submitting-patches.html#separate-your-changes): distinct logical changes and working intermediate states.
