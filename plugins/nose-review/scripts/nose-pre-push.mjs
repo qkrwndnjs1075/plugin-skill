@@ -103,7 +103,7 @@ function scanArchive(root, sha, operation, materializeSymlinks, state) {
         if(['.gitignore','.ignore','nose.ignore.json'].includes(file.split('/').at(-1))) rmSync(join(directory,file),{force:true});
       }
     }
-    return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]), `${sha}:${hash(entries.join('\0'))}`);
+    return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]), hash(entries.join('\0')));
   } finally {
     rmSync(directory, {recursive:true, force:true});
     rmSync(archiveDirectory, {recursive:true, force:true});
@@ -223,6 +223,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         advise(`${localRef}: duplicate-analysis inputs unchanged from ${comparisonSha}; secrets ${record.secrets.status}`);
         continue;
       }
+      advise(`local ${localSha}: preparing and scanning verified tree`);
       const local = archivedScan(root, localSha, (directory, files, identity) => {
         const result=scan(directory, files, root, identity);
         const policy=baselineCandidates(directory, root, result, record.warnings, record.reductions);
@@ -236,9 +237,13 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         const changedFiles=git(root,['diff','--name-only','-z',comparisonSha,localSha,'--']).split('\0').filter(Boolean);
         local.candidates=filterChangedCandidates(local.candidates,changedFiles);
         if (local.candidates.length) {
+          advise(`remote ${comparisonSha}: preparing comparison scan for ${local.candidates.length} local candidate(s)`);
           const remote=archivedScan(root, comparisonSha, (directory, files, identity) => scan(directory, files, root, identity));
           if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
+          const comparisonStarted=performance.now();
+          advise(`comparing ${local.candidates.length} local candidate(s) with ${remote.families.length} remote families`);
           local.candidates=filterRemoteExisting(local.candidates,remote.families);
+          advise(`comparison completed in ${Math.round(performance.now()-comparisonStarted)}ms; ${local.candidates.length} unreviewed candidate(s)`);
           record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};
         } else {
           record.comparisonBase={sha:comparisonSha, analysisSkipped:'no-candidates'};

@@ -113,9 +113,9 @@ export function register(root, session) {
     return record;
   });
 }
-function resultIdentity(root, args, version, commit, env, onSkip) {
+function resultIdentity(root, args, version, inputIdentity, env, onSkip) {
   const skip=reason=>{onSkip?.(reason);return null;};
-  if (!commit) return skip('no-commit-identity');
+  if (!inputIdentity) return skip('no-content-identity');
   try {
     const executable = (env.PATH ?? '').split(delimiter).map(directory=>resolve(root,directory,'nose'))
       .find(path=>{try {accessSync(path,constants.X_OK);return lstatSync(realpathSync(path)).isFile();} catch {return false;}});
@@ -138,20 +138,27 @@ function resultIdentity(root, args, version, commit, env, onSkip) {
     const ignorePaths=[join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(),'.config'),'git','ignore'),
       ...ignores.stdout.trim().split('\n').filter(Boolean).map(path=>resolve(root,path))];
     const globalIgnores=[...new Set(ignorePaths)].map(path=>[path,existsSync(path)?hash(readFileSync(path)):null]);
-    return {commit,root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
+    return {inputIdentity,root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
       policy,args,settings,globalIgnores,node:process.version,
       environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
   } catch { return skip('identity-unavailable'); }
 }
 
-export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
+export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
   const parallelism = availableParallelism();
   const threads = process.env.RAYON_NUM_THREADS ?? String(Math.min(2, parallelism));
   if (!/^[1-9]\d*$/.test(threads) || !Number.isSafeInteger(Number(threads)) || Number(threads) > parallelism)
     throw new Error(`RAYON_NUM_THREADS must be an integer from 1 to ${parallelism}`);
+  // Nose's detector overrides are not all exposed by --show-config. Preserve
+  // scanner, Git/config, locale and OS runtime inputs in both child and cache key.
+  const runtimeVariables=new Set(['PATH','HOME','USERPROFILE','HOMEDRIVE','HOMEPATH','LANG','LANGUAGE',
+    'TMPDIR','TMP','TEMP','SystemRoot','SYSTEMROOT','WINDIR','PATHEXT']);
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>
+    runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key)));
+  env.RAYON_NUM_THREADS=threads;
   const before = snapshot(root, verifiedFiles);
   const started = Date.now();
-  const version = spawnSync('nose',['--version'],{encoding:'utf8',timeout:5000});
+  const version = spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
   const cache = join(stateRoot(realpathSync(cacheOwner)), 'analysis-cache');
   mkdirSync(cache,{recursive:true,mode:0o700});
@@ -160,18 +167,17 @@ export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
   try {
     const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
     const args=['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions];
-    const env={...process.env,RAYON_NUM_THREADS:threads};
     const cacheEvent=({operation,outcome,reason})=>process.stderr.write(`[nose result-cache] ${operation} ${outcome}: ${reason}\n`);
     const identitySkipped=reason=>cacheEvent({operation:'identity',outcome:'skipped',reason});
     const identity=verifiedFiles === undefined ? (identitySkipped('working-folder-scan'),null)
-      : resultIdentity(root,args,version.stdout.trim(),commitIdentity,env,identitySkipped);
+      : resultIdentity(root,args,version.stdout.trim(),inputIdentity,env,identitySkipped);
     const resultCache={directory:stateRoot(realpathSync(cacheOwner)),identity,onEvent:cacheEvent};
     const cached=identity ? readScanResult(resultCache) : null;
     if (cached && cached.noseVersion===version.stdout.trim() && JSON.stringify(cached.files)===JSON.stringify(before)) {
       const memberHashesForFamily=createMemberHasher(root);
       const verified=cached.families.every(family=>hash(JSON.stringify(memberHashesForFamily(family)))===family.fingerprint);
       if (verified && JSON.stringify(before)===JSON.stringify(snapshot(root,verifiedFiles))) {
-        process.stderr.write(`[nose scan] verified result cache hit for ${commitIdentity}; ${cached.families.length} families\n`);
+        process.stderr.write(`[nose scan] verified result cache hit for ${inputIdentity}; ${cached.families.length} families\n`);
         return cached;
       }
       cacheEvent({operation:'verify',outcome:'miss',reason:verified?'source-changed-during-read':'membership-mismatch'});
@@ -214,7 +220,7 @@ export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
     process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
     const verifiedResult={noseVersion:version.stdout.trim(),families,files:before};
     if (identity) {
-      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),commitIdentity,env,identitySkipped);
+      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),inputIdentity,env,identitySkipped);
       if (JSON.stringify(identity)===JSON.stringify(afterIdentity)) writeScanResult({...resultCache,result:verifiedResult});
       else cacheEvent({operation:'write',outcome:'skipped',reason:'identity-changed-during-scan'});
     }

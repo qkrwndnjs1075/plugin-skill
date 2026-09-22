@@ -53,6 +53,23 @@ test('a new branch blocks unreviewed duplicates independently of working files',
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
 });
 
+test('equivalent committed trees reuse analysis across commits and agent sessions', t => {
+  const f = fixture(t);
+  const first = f.run(f.line(), {...process.env, CODEX_THREAD_ID: 'first-session'});
+  assert.equal(first.status, 1, first.stderr);
+  const candidates = f.report().candidates;
+  f.git('commit', '--allow-empty', '-qm', 'same tree, new commit');
+  const next = f.git('rev-parse', 'HEAD');
+  assert.notEqual(next, f.sha);
+  const repeated = f.run(f.line(next), {...process.env, CODEX_THREAD_ID: 'next-session'});
+  assert.equal(repeated.status, 1, repeated.stderr);
+  assert.match(repeated.stderr, /verified result cache hit/);
+  assert.doesNotMatch(repeated.stderr, /scanner finished/);
+  assert.equal(f.report().refs[0].localSha, next);
+  assert.deepEqual(f.report().candidates, candidates);
+  assert.equal(f.report().refs[0].secrets.status, 'passed');
+});
+
 test('local and remote scans reuse one locked source path without carrying files between commits', t=>{
   const f=fixture(t),bin=join(f.root,'fixture-bin'),state=join(f.root,'fixture-state'),calls=join(f.root,'calls.jsonl');
   mkdirSync(bin);

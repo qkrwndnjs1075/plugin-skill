@@ -217,10 +217,16 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   Source and family records are serialized incrementally, avoiding a second
   whole-report JSON string. A private-key MAC authenticates the complete entry
   before a loaded result is returned. Invalid, modified or oversized entries
-  fall back to analysis. Older cache formats are misses. Identity includes the commit and actual Git tree
+  fall back to analysis. Older cache formats are misses. Identity includes the actual Git tree
   inventory, scanner executable bytes/version, wrapper policy, effective settings,
-  global ignore-file contents and an environment digest. Environment values are
-  not written to the cache.
+  global ignore-file contents and the scanner environment digest. Equivalent trees
+  can reuse analysis across commits; each commit's secret checks still run.
+  The native scanner receives only scanner/Rayon, Git/XDG, locale, loader and OS
+  path/home/temp environment inputs. Those inputs are all hashed, including
+  `NOSE_*` overrides absent from `--show-config`. Agent-session and unrelated
+  shell variables reach neither the scanner nor the cache key. Environment values
+  are not written to the cache. Custom scanner wrappers cannot rely on unrelated
+  caller variables.
   Configuration files, external ignores or semantic packs disable result reuse;
   ordinary manual working-folder scans also bypass it. The existing Nose-owned
   analysis cache remains available on these paths. Cold full analyses still incur
@@ -241,7 +247,11 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   two scans plus 60 seconds per pushed ref (1,260 seconds), multiplied by the ref count.
   Manual recovery and pushed snapshots use the same budget. Scans report source count,
   worker budget, cache path, scanner completion, source-verification phase and family
-  count on stderr. A failure/timeout blocks and is reported.
+  count on stderr. Push diagnostics distinguish the local tree, remote comparison
+  tree and membership-comparison duration, and stream through the dispatcher as
+  they occur. Membership comparison indexes only hashes present in candidates,
+  then checks related families with the same multiplicity-preserving rules.
+  A failure/timeout blocks and is reported.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

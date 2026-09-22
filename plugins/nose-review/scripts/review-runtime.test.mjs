@@ -125,7 +125,7 @@ test('scans bound workers and reuse the project cache across temporary snapshots
   assert.equal(readFileSync(calls,'utf8'),count);
 });
 
-test('verified commit results reuse analysis but invalidate tool, environment, config and source changes',t=>{
+test('verified content results reuse across sessions but invalidate tool, environment, config and source changes',t=>{
   const logs=[];
   t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
   const fixture=mkdtempSync(join(tmpdir(),'nose-result-reuse-'));
@@ -140,14 +140,19 @@ test('verified commit results reuse analysis but invalidate tool, environment, c
     else if(process.argv.includes('--show-config')) console.log(JSON.stringify({schema:'nose.query-config/v1',
       config_file:fs.existsSync('nose.toml')?'nose.toml':null,
       query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
-    else {fs.appendFileSync(${JSON.stringify(calls)},'query\\n');console.log(JSON.stringify({families:[]}));}
+    else {
+      if(process.env.CODEX_THREAD_ID || process.env.TERM_SESSION_ID) throw new Error('session environment leaked');
+      fs.appendFileSync(${JSON.stringify(calls)},'query\\n');console.log(JSON.stringify({families:[]}));
+    }
   `,{mode:0o700});
-  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT,NOSE_TEST_CONTEXT:process.env.NOSE_TEST_CONTEXT,XDG_CONFIG_HOME:process.env.XDG_CONFIG_HOME};
+  const previous=Object.fromEntries(['PATH','NOSE_REVIEW_STATE_ROOT','NOSE_TEST_CONTEXT','XDG_CONFIG_HOME','CODEX_THREAD_ID','TERM_SESSION_ID','NOSE_ANCHOR_MIN_WEIGHT','LC_ALL'].map(key=>[key,process.env[key]]));
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state'),XDG_CONFIG_HOME:join(fixture,'config')});
   t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const run=()=>scan(root,['a.js'],root,'a'.repeat(40));
   const count=()=>readFileSync(calls,'utf8').trim().split('\n').length;
   const first=run();assert.deepEqual(run(),first);assert.equal(count(),1);
+  process.env.CODEX_THREAD_ID='another-thread';process.env.TERM_SESSION_ID='another-terminal';
+  assert.deepEqual(run(),first);assert.equal(count(),1);
   process.env.NOSE_TEST_CONTEXT='changed';run();assert.equal(count(),2);
   writeFileSync(executable,readFileSync(executable,'utf8')+'\n// same version, changed executable\n');
   run();assert.equal(count(),3);
@@ -161,6 +166,9 @@ test('verified commit results reuse analysis but invalidate tool, environment, c
   run();assert.equal(count(),7);
   writeFileSync(join(fixture,'config','git','ignore'),'vendor.js\n');
   run();assert.equal(count(),8);
+  process.env.NOSE_ANCHOR_MIN_WEIGHT='19';run();assert.equal(count(),9);
+  process.env.LC_ALL=process.env.LC_ALL==='C'?'en_US.UTF-8':'C';run();assert.equal(count(),10);
+  scan(root,['a.js'],root,'changed-inventory');assert.equal(count(),11);
   assert.ok(logs.some(line=>line.includes('identity skipped: external-config')));
   assert.ok(logs.some(line=>line.includes('verify miss: source-snapshot-mismatch')));
 });

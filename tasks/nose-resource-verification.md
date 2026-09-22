@@ -167,3 +167,49 @@ changed plugin files; the installed CommonJS pre-push reuse scenario passed.
 Existing managed hooks in plugin-skill, Chorus, penote and the metrics-management
 worktree passed bootstrap smoke checks. Local installed backup is
 `/Users/park/.codex/backups/nose-large-cache-20260922.tbpez4`.
+
+## Equivalent-input reuse and indexed comparisons (2026-09-22)
+
+- Cache identity now binds the verified Git inventory rather than commit metadata.
+  The native scanner receives a controlled environment covering detector, Rayon,
+  Git/XDG, locale, loader and OS path/home/temp inputs. The exact child environment
+  is hashed. Session variables cannot affect either scanner execution or reuse;
+  detector overrides absent from `--show-config` remain inputs. Source, executable,
+  effective configuration, global-ignore and membership checks remain intact.
+- Both intentional reductions and remote comparisons index only hashes present
+  in candidates, search the smallest matching list, and retain the original
+  multiset check. Growth, changed members and unverifiable evidence remain blocked;
+  baseline ordering still selects the same first matching reviewed family.
+- The dispatcher previously buffered diagnostics until completion. It now streams
+  them with backpressure and retains only bounded status-marker state, including
+  split markers. Logs distinguish local analysis, remote analysis and comparison.
+
+The parent ran real Nose/Gitleaks against the pinned 735-file Chorus subtree plus
+two duplicate fixture files. Comparator: plugin-skill `758df22`. Artifacts:
+`/private/tmp/nose-perf-qa-cVTnbE/results.json` and per-scenario logs.
+
+| Scenario | Previous seconds | Updated seconds | Updated analyses |
+| --- | ---: | ---: | ---: |
+| Cold local and remote | 9.606 | 8.558 | 2 |
+| Equivalent tree, new commit and session | 9.424 | 2.502 | 0 |
+| Third copy added | 7.441 | 6.194 | 1 |
+
+All paired candidate digests match; all secret checks pass. The grown family has
+a different fingerprint and still blocks. Timings are single observations, not
+thresholds or full-Chorus latency claims.
+
+The independent policy measurement used frozen old code and identical inputs at
+`/private/tmp/nose-policy-measure-6uhdhm94`. All five output digests match. A synthetic
+1,000-candidate / 50,000-family workload fell from 4.785s to 0.174s for remote
+comparison and 4.567s to 0.182s for reviewed reductions. Combined-process maximum
+RSS was 280.5MB before and 272.8MB after limiting the index to candidate hashes.
+The retained real 1,338-family corpus showed no material small-input speedup.
+No full-repository Chorus benchmark was run.
+
+Verification: 137/137 tests passed across the entire Nose suite plus package
+layout, split into disjoint 72- and 65-test invocations. Logs:
+`/tmp/nose-perf-core-tests.tap` and `/tmp/nose-perf-remaining-tests.tap`.
+Node syntax and whitespace checks passed. Editor LSP remained unavailable because
+the JavaScript workspace has no TypeScript installation. Main-session review
+checked source/config identity, index ordering and multiplicity, error/timeout
+propagation, installer closure and preservation of unrelated dirty work.
