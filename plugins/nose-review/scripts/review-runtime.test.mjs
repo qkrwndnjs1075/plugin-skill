@@ -126,6 +126,8 @@ test('scans bound workers and reuse the project cache across temporary snapshots
 });
 
 test('verified commit results reuse analysis but invalidate tool, environment, config and source changes',t=>{
+  const logs=[];
+  t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
   const fixture=mkdtempSync(join(tmpdir(),'nose-result-reuse-'));
   t.after(()=>rmSync(fixture,{recursive:true,force:true}));
   const root=join(fixture,'repo'),bin=join(fixture,'bin'),calls=join(fixture,'calls');
@@ -159,9 +161,13 @@ test('verified commit results reuse analysis but invalidate tool, environment, c
   run();assert.equal(count(),7);
   writeFileSync(join(fixture,'config','git','ignore'),'vendor.js\n');
   run();assert.equal(count(),8);
+  assert.ok(logs.some(line=>line.includes('identity skipped: external-config')));
+  assert.ok(logs.some(line=>line.includes('verify miss: source-snapshot-mismatch')));
 });
 
 test('CommonJS and short HTML sources stay in verified snapshots and reused results',t=>{
+  const logs=[];
+  t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
   const fixture=mkdtempSync(join(tmpdir(),'nose-cjs-cache-'));
   t.after(()=>rmSync(fixture,{recursive:true,force:true}));
   const bin=join(fixture,'bin'),root=join(fixture,'repo');
@@ -187,4 +193,6 @@ test('CommonJS and short HTML sources stay in verified snapshots and reused resu
   assert.deepEqual(scan(root,files,root,'b'.repeat(40)),first);
   assert.equal(readFileSync(calls,'utf8'),'query\n','a complete result must be reused');
   assert.deepEqual(Object.keys(first.files),files);
+  assert.ok(logs.some(line=>line.includes('[nose result-cache] write stored:')));
+  assert.ok(logs.some(line=>line.includes('[nose result-cache] read hit:')));
 });

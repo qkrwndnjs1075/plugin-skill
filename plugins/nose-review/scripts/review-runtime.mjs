@@ -113,32 +113,35 @@ export function register(root, session) {
     return record;
   });
 }
-function resultIdentity(root, args, version, commit, env) {
-  if (!commit) return null;
+function resultIdentity(root, args, version, commit, env, onSkip) {
+  const skip=reason=>{onSkip?.(reason);return null;};
+  if (!commit) return skip('no-commit-identity');
   try {
     const executable = (env.PATH ?? '').split(delimiter).map(directory=>resolve(root,directory,'nose'))
       .find(path=>{try {accessSync(path,constants.X_OK);return lstatSync(realpathSync(path)).isFile();} catch {return false;}});
-    if (!executable) return null;
+    if (!executable) return skip('executable-unresolved');
     const config = spawnSync(executable,[...args,'--show-config'],{cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
-    if (config.status !== 0) return null;
+    if (config.status !== 0) return skip('effective-config-unavailable');
     const settings = JSON.parse(config.stdout);
     // External configuration can refer to mutable files outside the verified tree.
-    if (settings.schema !== 'nose.query-config/v1' || settings.config_file !== null
-      || !settings.query || settings.query['ignore-file'] !== null
-      || settings.query['semantic-pack-lock'] !== null
-      || !Array.isArray(settings.query['semantic-packs']) || settings.query['semantic-packs'].length) return null;
+    if (settings.schema !== 'nose.query-config/v1' || !settings.query
+      || !Array.isArray(settings.query['semantic-packs'])) return skip('effective-config-unsupported');
+    if (settings.config_file !== null) return skip('external-config');
+    if (settings.query['ignore-file'] !== null) return skip('external-ignore');
+    if (settings.query['semantic-pack-lock'] !== null || settings.query['semantic-packs'].length)
+      return skip('external-semantic-pack');
     const scripts=dirname(fileURLToPath(import.meta.url));
     const policy=['review-runtime.mjs','review-policy.mjs','nose-pre-push.mjs','scan-result-cache.mjs']
       .map(name=>[name,hash(readFileSync(join(scripts,name)))]);
     const ignores=spawnSync('git',['config','--path','--get-all','core.excludesFile'],{cwd:root,env,encoding:'utf8',timeout:5000});
-    if (ignores.error || ![0,1].includes(ignores.status)) return null;
+    if (ignores.error || ![0,1].includes(ignores.status)) return skip('global-ignore-config-unavailable');
     const ignorePaths=[join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(),'.config'),'git','ignore'),
       ...ignores.stdout.trim().split('\n').filter(Boolean).map(path=>resolve(root,path))];
     const globalIgnores=[...new Set(ignorePaths)].map(path=>[path,existsSync(path)?hash(readFileSync(path)):null]);
     return {commit,root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
       policy,args,settings,globalIgnores,node:process.version,
       environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
-  } catch { return null; }
+  } catch { return skip('identity-unavailable'); }
 }
 
 export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
@@ -158,8 +161,11 @@ export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
     const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
     const args=['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions];
     const env={...process.env,RAYON_NUM_THREADS:threads};
-    const identity=verifiedFiles === undefined ? null : resultIdentity(root,args,version.stdout.trim(),commitIdentity,env);
-    const resultCache={directory:stateRoot(realpathSync(cacheOwner)),identity};
+    const cacheEvent=({operation,outcome,reason})=>process.stderr.write(`[nose result-cache] ${operation} ${outcome}: ${reason}\n`);
+    const identitySkipped=reason=>cacheEvent({operation:'identity',outcome:'skipped',reason});
+    const identity=verifiedFiles === undefined ? (identitySkipped('working-folder-scan'),null)
+      : resultIdentity(root,args,version.stdout.trim(),commitIdentity,env,identitySkipped);
+    const resultCache={directory:stateRoot(realpathSync(cacheOwner)),identity,onEvent:cacheEvent};
     const cached=identity ? readScanResult(resultCache) : null;
     if (cached && cached.noseVersion===version.stdout.trim() && JSON.stringify(cached.files)===JSON.stringify(before)) {
       const memberHashesForFamily=createMemberHasher(root);
@@ -168,6 +174,9 @@ export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
         process.stderr.write(`[nose scan] verified result cache hit for ${commitIdentity}; ${cached.families.length} families\n`);
         return cached;
       }
+      cacheEvent({operation:'verify',outcome:'miss',reason:verified?'source-changed-during-read':'membership-mismatch'});
+    } else if (cached) {
+      cacheEvent({operation:'verify',outcome:'miss',reason:cached.noseVersion===version.stdout.trim()?'source-snapshot-mismatch':'version-mismatch'});
     }
     const reportPath=join(temporary,'report.json');
     const reportDescriptor=openSync(reportPath,'wx',0o600);
@@ -204,8 +213,11 @@ export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
     process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
     const verifiedResult={noseVersion:version.stdout.trim(),families,files:before};
-    if (identity && JSON.stringify(identity)===JSON.stringify(resultIdentity(root,args,version.stdout.trim(),commitIdentity,env)))
-      writeScanResult({...resultCache,result:verifiedResult});
+    if (identity) {
+      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),commitIdentity,env,identitySkipped);
+      if (JSON.stringify(identity)===JSON.stringify(afterIdentity)) writeScanResult({...resultCache,result:verifiedResult});
+      else cacheEvent({operation:'write',outcome:'skipped',reason:'identity-changed-during-scan'});
+    }
     return verifiedResult;
   } finally { rmSync(temporary,{recursive:true,force:true}); }
 }
