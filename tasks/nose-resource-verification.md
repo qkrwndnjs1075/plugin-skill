@@ -113,3 +113,10 @@ integrated them and performed real CLI QA and self-review. No independent gate
 reviewer was used. Upstream Nose discovery and effective-config contracts were
 checked at [v0.21.0 discovery](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-frontend/src/discover.rs)
 and [configuration](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-cli/src/config.rs).
+
+Push-gate recovery removed the cache's duplicate production SHA-256 helper in
+favor of `review-policy.hash`. Cache tests (18) and real pre-push reuse/config
+invalidation scenarios (2) passed again. Refreshed source-bound decisions retain
+four test-only families: independent digest oracle, separate failure assertions,
+and suite-owned temporary-directory lifecycles. Decisions remain in ignored local
+state; unrelated Skill Maintenance findings were outside this recovery scope.

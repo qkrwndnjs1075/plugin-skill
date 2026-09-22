@@ -1,13 +1,13 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
+import { hash as digest } from './review-policy.mjs';
 
 const schema = 1;
 const digestPattern = /^[a-f0-9]{64}$/;
 const maxEntryBytes = 128 * 1024 * 1024;
 const maxTotalBytes = 512 * 1024 * 1024;
 const maxEntries = 32;
-const digest = value => createHash('sha256').update(value).digest('hex');
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
