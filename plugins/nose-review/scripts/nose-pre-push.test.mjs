@@ -338,3 +338,21 @@ test('secret scans inspect symlink blob text without following its target',t=>{
   assert.ok(!result.stderr.includes(token));
   assert.ok(f.report().refs[0].secrets.findings.some(finding=>finding.file==='reference'));
 });
+
+test('multiple pushed refs reuse commit secret scans while retaining per-ref reports',t=>{
+  const f=fixture(t),bin=join(f.root,'detector-bin'),calls=join(f.root,'detector-calls');
+  mkdirSync(bin);
+  writeFileSync(join(bin,'gitleaks'),'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs'),args=process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(calls)},'scan\\n');
+    fs.writeFileSync(args[args.indexOf('--report-path')+1],'[]');
+  `,{mode:0o700});
+  const result=f.run(f.line()+f.line(f.sha,zero,'second'),{...process.env,PATH:bin+':'+process.env.PATH});
+  assert.equal(result.status,1,result.stderr);
+  const report=f.report();
+  assert.deepEqual(report.refs.map(ref=>ref.secrets),[
+    {status:'passed',findings:[],commitsScanned:1},
+    {status:'passed',findings:[],commitsScanned:1},
+  ]);
+  assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,3,'two metadata scans and one shared commit scan');
+});

@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { git, hash, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline, withReviewLock } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
-import { scanCommitSecrets } from './commit-secrets.mjs';
+import { scanCommitsSecrets } from './commit-secrets.mjs';
 import { saveFailure } from './failure-history.mjs';
 
 const zero = /^0+$/;
@@ -154,6 +154,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
   if (!updates.length) return 0;
   const root = projectRoot(cwd);
   const refs = [];
+  const secretResults = new Map();
   let noseVersion;
   for (const line of updates) {
     const [localRef, localSha, remoteRef, remoteSha, extra] = line.trim().split(/\s+/);
@@ -201,9 +202,13 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         if(result.reason) record.secrets.reason=result.reason;
         for (const finding of result.findings) record.secrets.findings.push({...finding,file:'git-metadata/'+finding.file,commit:finding.file.split('.')[0]});
       } finally { rmSync(metadata,{recursive:true,force:true}); }
+      if (record.secrets.status !== 'unavailable') {
+        const pending=[...new Set(outgoing)].filter(sha=>!secretResults.has(sha));
+        for (const [sha,result] of scanCommitsSecrets(root,pending)) secretResults.set(sha,result);
+      }
       for(const sha of new Set(outgoing)) {
         if(record.secrets.status==='unavailable') break;
-        const result=scanCommitSecrets(root,sha);
+        const result=secretResults.get(sha);
         record.secrets.commitsScanned++;
         for (const finding of result.findings) record.secrets.findings.push({...finding,commit:sha});
         if(result.status==='unavailable') { record.secrets.status='unavailable'; record.secrets.reason=result.reason; break; }
