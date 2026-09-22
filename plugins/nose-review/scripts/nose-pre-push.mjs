@@ -227,12 +227,17 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       });
       if(local.baselineSource) record.baselineSource=local.baselineSource;
       if (comparisonSha) {
-        const remote=archivedScan(root, comparisonSha, (directory, files, identity) => scan(directory, files, root, identity));
-        if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
-        local.candidates=filterRemoteExisting(local.candidates,remote.families);
+        git(root, ['cat-file', '-e', `${comparisonSha}^{commit}`]);
         const changedFiles=git(root,['diff','--name-only','-z',comparisonSha,localSha,'--']).split('\0').filter(Boolean);
         local.candidates=filterChangedCandidates(local.candidates,changedFiles);
-        record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};
+        if (local.candidates.length) {
+          const remote=archivedScan(root, comparisonSha, (directory, files, identity) => scan(directory, files, root, identity));
+          if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
+          local.candidates=filterRemoteExisting(local.candidates,remote.families);
+          record.comparisonBase={sha:comparisonSha, familyCount:remote.families.length};
+        } else {
+          record.comparisonBase={sha:comparisonSha, analysisSkipped:'no-candidates'};
+        }
       }
       noseVersion = local.noseVersion;
       record.candidates = relativeFamilies(local.candidates, local.directory);

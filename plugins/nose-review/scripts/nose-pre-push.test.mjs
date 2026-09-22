@@ -57,7 +57,8 @@ test('local and remote scans reuse one locked source path without carrying files
   const f=fixture(t),bin=join(f.root,'fixture-bin'),state=join(f.root,'fixture-state'),calls=join(f.root,'calls.jsonl');
   mkdirSync(bin);
   writeFileSync(join(f.root,'local-only.js'),'export const unique=1;\n');
-  f.git('add','local-only.js');f.git('commit','-qm','local change');
+  writeFileSync(join(f.root,'a.js'),source('alpha')+'// outside compared span\n');
+  f.git('add','local-only.js','a.js');f.git('commit','-qm','local change');
   writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
     const fs=require('node:fs'),path=require('node:path');
     if(process.argv.includes('--version'))console.log('nose fixture');
@@ -65,7 +66,7 @@ test('local and remote scans reuse one locked source path without carrying files
     else {
       const args=process.argv.slice(2),cache=args[args.indexOf('--cache-dir')+1];
       fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({cwd:process.cwd(),cache,local:fs.existsSync('local-only.js')})+'\\n');
-      console.log(JSON.stringify({families:[]}));
+      console.log(JSON.stringify({families:[{locations:['a.js','b.js'].map(file=>({file,start:1,end:10,region:{}}))}]}));
     }
   `,{mode:0o700});
   const result=f.run(f.line(f.git('rev-parse','HEAD'),f.sha),{...process.env,PATH:bin+':'+process.env.PATH,NOSE_REVIEW_STATE_ROOT:state});
@@ -77,6 +78,16 @@ test('local and remote scans reuse one locked source path without carrying files
   assert.deepEqual(rows.map(row=>row.local),[true,false]);
   assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot'));
   assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot.lock'));
+});
+
+test('remote analysis is skipped when all families are outside changed files',t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.root,'unique.js'),'export const unique=42;\n');
+  f.git('add','unique.js');f.git('commit','-qm','unrelated source');
+  const result=f.run(f.line(f.git('rev-parse','HEAD'),f.sha));
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(f.report().refs[0].comparisonBase.analysisSkipped,'no-candidates');
+  assert.equal((result.stderr.match(/scanner finished/g)??[]).length,1);
 });
 
 for(const redirect of ['snapshot','state']) test(`stable ${redirect} refuses symlinks without deleting the target`,t=>{
