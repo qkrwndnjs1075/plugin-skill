@@ -10,7 +10,7 @@ export { hash } from './review-policy.mjs';
 export const scanTimeoutMs = 600_000;
 export const refTimeoutMs = 2 * scanTimeoutMs + 60_000;
 
-const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.html','.java','.js','.jsx','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
+const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.htm','.html','.java','.js','.jsx','.cjs','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
 const excluded = new Set(['.git','.nose-review','node_modules','.venv','venv','__pycache__','dist','build','target','vendor','.next','.nuxt','coverage','.cache']);
 export function projectRoot(cwd) {
   if (typeof cwd !== 'string' || !cwd) throw new Error('Project directory is required');

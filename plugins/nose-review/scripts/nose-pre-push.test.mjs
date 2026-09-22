@@ -90,6 +90,22 @@ test('remote analysis is skipped when all families are outside changed files',t=
   assert.equal((result.stderr.match(/scanner finished/g)??[]).length,1);
 });
 
+test('repeated pushed CommonJS growth reuses both local and remote verified results',t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.root,'copy.cjs'),source('gamma'));
+  f.git('add','copy.cjs');f.git('commit','-qm','new CommonJS copy');
+  const input=f.line(f.git('rev-parse','HEAD'),f.sha);
+  const first=f.run(input);
+  assert.equal(first.status,1,first.stderr);
+  const candidates=f.report().candidates;
+  assert.ok(candidates.some(family=>family.locations.some(location=>location.file==='copy.cjs')));
+  const repeated=f.run(input);
+  assert.equal(repeated.status,1,repeated.stderr);
+  assert.deepEqual(f.report().candidates,candidates);
+  assert.equal((repeated.stderr.match(/verified result cache hit/g)??[]).length,2);
+  assert.equal((repeated.stderr.match(/scanner finished/g)??[]).length,0);
+});
+
 for(const redirect of ['snapshot','state']) test(`stable ${redirect} refuses symlinks without deleting the target`,t=>{
   const f=fixture(t),state=join(f.root,'fixture-state'),owner=join(state,hash(f.root)),target=join(f.root,'keep');
   mkdirSync(owner,{recursive:true});mkdirSync(target);writeFileSync(join(target,'keep.txt'),'preserve');

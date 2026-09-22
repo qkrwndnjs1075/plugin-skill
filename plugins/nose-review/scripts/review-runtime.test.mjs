@@ -160,3 +160,31 @@ test('verified commit results reuse analysis but invalidate tool, environment, c
   writeFileSync(join(fixture,'config','git','ignore'),'vendor.js\n');
   run();assert.equal(count(),8);
 });
+
+test('CommonJS and short HTML sources stay in verified snapshots and reused results',t=>{
+  const fixture=mkdtempSync(join(tmpdir(),'nose-cjs-cache-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const bin=join(fixture,'bin'),root=join(fixture,'repo');
+  mkdirSync(bin);mkdirSync(root);
+  writeFileSync(join(root,'a.cjs'),'module.exports = 1;\n');
+  writeFileSync(join(root,'b.htm'),'<script>const value=1;</script>\n');
+  const calls=join(fixture,'queries');
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs');
+    if(process.argv.includes('--version')) console.log('nose fixture');
+    else if(process.argv.includes('--show-config')) console.log(JSON.stringify({schema:'nose.query-config/v1',
+      config_file:null,query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
+    else {
+      fs.appendFileSync(${JSON.stringify(calls)},'query\\n');
+      console.log(JSON.stringify({families:[{locations:['a.cjs','b.htm'].map(file=>({file,start:1,end:1,region:{}}))}]}));
+    }
+  `,{mode:0o700});
+  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT};
+  Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const files=['a.cjs','b.htm'];
+  const first=scan(root,files,root,'b'.repeat(40));
+  assert.deepEqual(scan(root,files,root,'b'.repeat(40)),first);
+  assert.equal(readFileSync(calls,'utf8'),'query\n','a complete result must be reused');
+  assert.deepEqual(Object.keys(first.files),files);
+});
