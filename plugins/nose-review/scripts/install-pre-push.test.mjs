@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
 import { install } from './install-pre-push.mjs';
 import { refTimeoutMs, scanTimeoutMs } from './review-runtime.mjs';
 
@@ -77,43 +79,53 @@ test('Nose gate failures propagate through the installed dispatcher',t=>{
 test('installed dispatcher streams diagnostics before exit and recognizes a split status marker',async t=>{
   const f=fixture(t);
   writeFileSync(join(f.source,'nose-pre-push.mjs'),`
-import {existsSync,watch} from 'node:fs';
-import {join} from 'node:path';
-async function diagnostic(text,ack) {
-  await new Promise(resolve=>{
-    const watcher=watch(process.env.NOSE_TEST_ACK_DIR,()=>{
-      if(existsSync(join(process.env.NOSE_TEST_ACK_DIR,ack))) { watcher.close();resolve(); }
-    });
-    process.stderr.write(text);
-  });
+import {once} from 'node:events';
+import {createConnection} from 'node:net';
+const socket=createConnection({host:'127.0.0.1',port:Number(process.env.NOSE_TEST_ACK_PORT)});
+await once(socket,'data');
+async function diagnostic(text) {
+  const ack=once(socket,'data');
+  process.stderr.write(text);
+  await ack;
 }
-await diagnostic('stage: scanning\\nNOSE_DUPLICATION_', 'first');
-await diagnostic('BLOCKED: fixture\\n', 'second');
+await diagnostic('stage: scanning\\nNOSE_DUPLICATION_');
+await diagnostic('BLOCKED: fixture\\n');
+socket.end();
 process.exitCode=1;
 `);
   const installed=install(f.repo,f.source);
-  const ackDir=join(f.temp,'ack');
-  mkdirSync(ackDir);
-  const child=spawn(installed.hook,[],{cwd:f.repo,detached:true,env:{...process.env,NOSE_TEST_ACK_DIR:ackDir},stdio:['pipe','ignore','pipe']});
+  const server=createServer();
+  let socket;
+  t.after(()=>{socket?.destroy();server.close();});
+  const listening=once(server,'listening');
+  server.listen(0,'127.0.0.1');
+  await listening;
+  const child=spawn(installed.hook,[],{cwd:f.repo,detached:true,env:{...process.env,NOSE_TEST_ACK_PORT:String(server.address().port)},stdio:['pipe','ignore','pipe']});
   const stop=()=>{try { process.kill(-child.pid,'SIGKILL'); } catch(error) { if(error.code!=='ESRCH') throw error; }};
   t.after(stop);
-  let stderr='';
+  let stderr='',acknowledgements=0;
   const result=await new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>{stop();reject(new Error('Dispatcher did not stream diagnostics before child exit: '+stderr));},5000);
+    server.once('connection',connection=>{
+      socket=connection;
+      socket.on('error',reject);
+      socket.write('R');
+    });
     child.on('error',error=>{clearTimeout(timeout);reject(error);});
     child.on('close',(status,signal)=>{clearTimeout(timeout);resolve({status,signal});});
     child.stderr.on('data',chunk=>{
       stderr+=chunk;
-      if(stderr.includes('stage: scanning\nNOSE_DUPLICATION_') && !existsSync(join(ackDir,'first'))) writeFileSync(join(ackDir,'first'),'ack');
-      if(stderr.includes('BLOCKED: fixture\n') && !existsSync(join(ackDir,'second'))) writeFileSync(join(ackDir,'second'),'ack');
+      if((acknowledgements===0 && stderr.includes('stage: scanning\nNOSE_DUPLICATION_')) || (acknowledgements===1 && stderr.includes('BLOCKED: fixture\n'))) {
+        acknowledgements++;
+        socket.write('A');
+      }
     });
     child.stdin.end();
   });
   assert.equal(result.status,1,stderr);
   assert.equal(result.signal,null);
   assert.equal(stderr,'stage: scanning\nNOSE_DUPLICATION_BLOCKED: fixture\n');
-  assert.ok(existsSync(join(ackDir,'first')));
-  assert.ok(existsSync(join(ackDir,'second')));
+  assert.equal(acknowledgements,2);
 });
 for(const [status,diagnostic,expected,recorded] of [
   [1,'NOSE_SECRETS_BLOCKED: fixture',1,false],

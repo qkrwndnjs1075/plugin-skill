@@ -213,3 +213,9 @@ Node syntax and whitespace checks passed. Editor LSP remained unavailable becaus
 the JavaScript workspace has no TypeScript installation. Main-session review
 checked source/config identity, index ordering and multiplicity, error/timeout
 propagation, installer closure and preservation of unrelated dirty work.
+
+Installed verification exposed an intermittent filesystem-watch acknowledgement
+loss in the new streaming test after its first diagnostic. The test now uses an
+ephemeral loopback socket with a readiness handshake and one acknowledgement per
+fragment. It still proves output arrives before gate exit and preserves split
+status-marker coverage, without relying on filesystem event delivery or sleeps.
