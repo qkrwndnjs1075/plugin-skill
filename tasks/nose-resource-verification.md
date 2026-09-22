@@ -48,3 +48,68 @@ Local rollout: updated the five inspected source-identical files in installed No
 Source contracts checked: [Nose thread initialization](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-cli/src/main.rs), [Nose cache identity](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-cli/src/cache/source.rs), [Rayon worker selection](https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html#method.num_threads). Local cache-command flags were checked with `nose cache status --help` and `nose cache clear --help`.
 
 Review method: direct source/runtime inspection, no subagents. The mandela check excludes claims of independent detector accuracy and extrapolation from the small benchmark to the full repository. The consistency audit found all scanner entrypoints converge on `review-runtime.scan`; no second resource-policy owner was introduced.
+
+## Follow-up: verified result reuse and bounded secret batches (2026-09-22)
+
+Code revision: `13688bf33bd0c30eea5b913e18521ce00dba1962`.
+
+- Changed-file filtering now precedes remote-family comparison. An empty candidate
+  set skips the remote analysis after remote-object validation; local policy and
+  secret checks still run.
+- Complete commit results use bounded, authenticated private storage. The cache
+  key binds the actual Git tree inventory, executable/version, effective settings,
+  global ignores, environment digest and wrapper source. Archive bytes, source
+  snapshots and family membership are reverified on a hit. External configuration
+  disables result reuse. Bad entries miss; no failed scan is cached.
+- Secret checks deduplicate objects only within an invocation and batch Git reads
+  and Gitleaks calls at 256 files / 32 MiB, with oversized blobs checked alone.
+  Every commit/path occurrence is retained. Per-push commit results can be shared
+  across refs. No persistent secret cache was added.
+
+### Observed comparison
+
+The isolated fixture uses the same pinned Chorus 735-file subtree described above,
+then adds two duplicate functions in a new commit. Both wrappers compare the same
+local/remote commits with real Nose and Gitleaks. The old wrapper is exported from
+`c23a59b`. Node 24.18.1 and Nose 0.21.0; two workers on both paths.
+
+| Scenario | Wall seconds | Nose analyses | Result |
+| --- | ---: | ---: | --- |
+| Old wrapper | 6.917 | 2 | blocked, one candidate |
+| Updated, cold | 6.671 | 2 | identical candidate |
+| Updated, repeated commit | 1.973 | 0 | identical candidate, two verified result hits |
+| Baseline-only decision | 1.318 | 0 | passed; remote analysis unnecessary |
+| Tampered cache | 6.379 | 2 | rejected cache, original candidate still blocks |
+| Added third copy, old | 6.397 | 2 | blocks grown family |
+| Added third copy, updated | 4.010 | 1 | identical grown family, remote result reused |
+
+Original candidate digest: `7c0fd21dad75646408e725f435d431ce09cfe57e266c1cc18876a10936c8c8d4`.
+Grown candidate digest: `63e07072effc147995f6d5eea9e8bc57f58aeaa1dae0bffb02325aea96e352f2`.
+All rows retained secret checks. These are representative single-run timings,
+not a p95, full-repository benchmark or promise of faster cold detection.
+
+### Verification and review
+
+- PASS, manual CLI QA, code SHA above: old/new matching-output comparison,
+  repeated results, baseline-only policy refresh, tampered cache, and changed
+  source. Artifact: `/private/tmp/nose-optimization-qa-V2hcdt/results.json`, with
+  individual sanitized logs in that directory.
+- PASS, main-session self-review, code SHA above: traced cache authority and
+  invalidation, source race checks, first-parent history and symlink secret
+  coverage, installer dependency closure, retained remote-object validation,
+  original-hook chaining and unrelated dirty work preservation.
+- Full suite passed 114/114; a subsequently added multi-ref regression passed
+  1/1. Artifacts: `/tmp/nose-optimization-final-tests.tap` and
+  `/tmp/nose-multiref-tests.tap`. Exact staged cache-integration snapshot also
+  passed the two directly affected pre-push scenarios.
+- The first full run exposed an installer-test payload list missing the new
+  module. The fixture was repaired; the final full suite includes all 11 passing
+  installer tests. No assertions were removed or weakened.
+- Editor LSP could not initialize because this repository has no TypeScript
+  installation. Node syntax checks and executable tests provided verification.
+
+Independent workers implemented cache storage and secret batching; the parent
+integrated them and performed real CLI QA and self-review. No independent gate
+reviewer was used. Upstream Nose discovery and effective-config contracts were
+checked at [v0.21.0 discovery](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-frontend/src/discover.rs)
+and [configuration](https://github.com/corca-ai/nose/blob/v0.21.0/crates/nose-cli/src/config.rs).

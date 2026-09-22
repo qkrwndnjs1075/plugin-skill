@@ -53,11 +53,18 @@ Reviewed fingerprints and intentional decisions in the local, Git-excluded
 that checkout. The hook applies them to the verified pushed snapshot, so a stale
 decision cannot hide changed source. A pushed baseline from an older setup takes
 precedence while it remains tracked. When the pushed ref already exists, the hook
-also scans the remote tip as a comparison base after applying those decisions:
+first keeps candidates touching changed files, then analyzes the remote tip as a
+comparison base only if candidates remain after applying those decisions:
 unchanged families and strict member reductions pass, while new families, growth,
 and edited membership block. This comparison does not record or imply review, and
 it never writes a baseline. Content fingerprints exclude file paths, line offsets
 and trailing whitespace.
+
+When no candidates remain, the remote commit is still checked for availability;
+the report records `comparisonBase.analysisSkipped: no-candidates`. Otherwise,
+verified commit analyses can reuse a complete result from the private project
+cache. Archives and source membership are verified again on cache hits, and local
+review decisions are reapplied each time. Reuse never records approval.
 
 New intentional decisions include verified per-member hashes. When a reviewed
 family disappears and the remaining members are a strict sub-multiset of it,
@@ -79,6 +86,12 @@ the reachable history remains the conservative fallback. Checks use Gitleaks bui
 environment allowlists or inline suppression. Findings contain only rule, file,
 line and commit, never the credential value or source excerpt. This detects known
 secret patterns, not every possible secret, and does not inspect nested archives.
+
+Within a push, repeated commit results are reused across refs. Unique changed
+blobs are read with Git's batch protocol and checked in groups of at most 256
+files or 32 MiB; a larger individual blob is checked alone. Each finding is mapped
+back to every original commit and path, including copies later deleted. Secret
+scan results are not persisted between pushes.
 
 Outgoing commit metadata and the pushed annotated-tag chain are scanned too;
 findings use `git-metadata/<object-id>.commit.txt` or `.tag.txt` locations.
@@ -199,6 +212,17 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   Cold scans can take longer with fewer workers; unchanged reruns benefit most.
   Source lines and span hashes are reused only within a scan, whose final source
   snapshot must still match. Manual acceptance always starts a fresh reader.
+- Complete commit results use a separate `scan-results` cache in that state
+  directory, limited to 32 entries and 512 MiB (128 MiB per entry). Entries are
+  authenticated with a private local key. Invalid, modified or oversized entries
+  fall back to analysis. Identity includes the commit and actual Git tree
+  inventory, scanner executable bytes/version, wrapper policy, effective settings,
+  global ignore-file contents and an environment digest. Environment values are
+  not written to the cache.
+  Configuration files, external ignores or semantic packs disable result reuse;
+  ordinary manual working-folder scans also bypass it. The existing Nose-owned
+  analysis cache remains available on these paths. Cold full analyses still incur
+  the detector's full cost.
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.
