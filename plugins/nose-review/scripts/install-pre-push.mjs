@@ -78,7 +78,7 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
     if(existing!==null && !ours && existsSync(backup)) throw new Error('Original hook backup already exists; resolve manually');
     const data=sources.map(name=>[name,readFileSync(join(source,name),'utf8')]);
     const dispatcher=`import {readFileSync,existsSync,statSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const input=readFileSync(0);
 const original=${JSON.stringify(backup)};
@@ -88,18 +88,34 @@ if(existsSync(original) && (statSync(original).mode & 0o111)) {
 }
 const refCount=Math.max(1,input.toString('utf8').trim().split(/\\n/).filter(line=>line.trim()).length);
 const timeoutMs=refCount*${refTimeoutMs};
-const check=spawnSync(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{input,stdio:['pipe','inherit','pipe'],encoding:'utf8',timeout:timeoutMs,maxBuffer:64*1024*1024});
-if(check.stderr) process.stderr.write(check.stderr);
+const child=spawn(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{stdio:['pipe','inherit','pipe'],timeout:timeoutMs});
+const markers=['NOSE_DUPLICATION_BLOCKED','NOSE_SECRETS_BLOCKED','NOSE_CHECK_UNAVAILABLE'];
+const found=new Set(),tailLength=Math.max(...markers.map(marker=>marker.length))-1;
+let tail='',error;
+child.stderr.on('data',chunk=>{
+ const text=tail+chunk.toString('utf8');
+ for(const marker of markers) if(text.includes(marker)) found.add(marker);
+ tail=text.slice(-tailLength);
+ if(!process.stderr.write(chunk)) child.stderr.pause();
+});
+process.stderr.on('drain',()=>child.stderr.resume());
+child.on('error',cause=>{error=cause;});
+child.stdin.on('error',cause=>{if(cause.code!=='EPIPE') error=cause;});
+const check=await new Promise(resolve=>{
+ child.on('close',(status,signal)=>resolve({status,signal,error}));
+ child.stdin.end(input);
+});
 const expected=check.status===0
- || (check.status===1 && /NOSE_(?:DUPLICATION|SECRETS)_BLOCKED/.test(check.stderr??''))
- || (check.status===2 && /NOSE_CHECK_UNAVAILABLE/.test(check.stderr??''));
+ || (check.status===1 && (found.has('NOSE_DUPLICATION_BLOCKED') || found.has('NOSE_SECRETS_BLOCKED')))
+ || (check.status===2 && found.has('NOSE_CHECK_UNAVAILABLE'));
 if(check.error || check.signal || !expected) {
  console.error('NOSE_CHECK_UNAVAILABLE: Nose gate could not complete');
  try { const {saveFailure}=await import('./failure-history.mjs'); console.error('Failure record: '+saveFailure(process.cwd(),{exitCode:2,gateStatus:'unavailable',refs:[],reason:'Gate process failed, returned an unexpected status, or exceeded '+timeoutMs/1000+' seconds'})); }
  catch { console.error('Failure history could not be saved'); }
- process.exit(2);
+ process.exitCode=2;
+} else {
+ process.exitCode=check.status;
 }
-process.exit(check.status);
 `;
     data.push(['dispatch.mjs',dispatcher]);
     ignoreLocalReports(root);

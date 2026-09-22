@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { install } from './install-pre-push.mjs';
 import { refTimeoutMs, scanTimeoutMs } from './review-runtime.mjs';
 
@@ -73,6 +73,71 @@ test('Nose gate failures propagate through the installed dispatcher',t=>{
   writeFileSync(join(f.source,'nose-pre-push.mjs'),'process.stderr.write("NOSE_DUPLICATION_BLOCKED: fixture\\n");process.exit(1);\n');
   const result=install(f.repo,f.source);
   assert.equal(spawnSync(result.hook,[],{cwd:f.repo,input:''}).status,1);
+});
+test('installed dispatcher streams diagnostics before exit and recognizes a split status marker',async t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),`
+import {existsSync,watch} from 'node:fs';
+import {join} from 'node:path';
+async function diagnostic(text,ack) {
+  await new Promise(resolve=>{
+    const watcher=watch(process.env.NOSE_TEST_ACK_DIR,()=>{
+      if(existsSync(join(process.env.NOSE_TEST_ACK_DIR,ack))) { watcher.close();resolve(); }
+    });
+    process.stderr.write(text);
+  });
+}
+await diagnostic('stage: scanning\\nNOSE_DUPLICATION_', 'first');
+await diagnostic('BLOCKED: fixture\\n', 'second');
+process.exitCode=1;
+`);
+  const installed=install(f.repo,f.source);
+  const ackDir=join(f.temp,'ack');
+  mkdirSync(ackDir);
+  const child=spawn(installed.hook,[],{cwd:f.repo,detached:true,env:{...process.env,NOSE_TEST_ACK_DIR:ackDir},stdio:['pipe','ignore','pipe']});
+  const stop=()=>{try { process.kill(-child.pid,'SIGKILL'); } catch(error) { if(error.code!=='ESRCH') throw error; }};
+  t.after(stop);
+  let stderr='';
+  const result=await new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>{stop();reject(new Error('Dispatcher did not stream diagnostics before child exit: '+stderr));},5000);
+    child.on('error',error=>{clearTimeout(timeout);reject(error);});
+    child.on('close',(status,signal)=>{clearTimeout(timeout);resolve({status,signal});});
+    child.stderr.on('data',chunk=>{
+      stderr+=chunk;
+      if(stderr.includes('stage: scanning\nNOSE_DUPLICATION_') && !existsSync(join(ackDir,'first'))) writeFileSync(join(ackDir,'first'),'ack');
+      if(stderr.includes('BLOCKED: fixture\n') && !existsSync(join(ackDir,'second'))) writeFileSync(join(ackDir,'second'),'ack');
+    });
+    child.stdin.end();
+  });
+  assert.equal(result.status,1,stderr);
+  assert.equal(result.signal,null);
+  assert.equal(stderr,'stage: scanning\nNOSE_DUPLICATION_BLOCKED: fixture\n');
+  assert.ok(existsSync(join(ackDir,'first')));
+  assert.ok(existsSync(join(ackDir,'second')));
+});
+for(const [status,diagnostic,expected,recorded] of [
+  [1,'NOSE_SECRETS_BLOCKED: fixture',1,false],
+  [2,'NOSE_CHECK_UNAVAILABLE: fixture',2,false],
+  [1,'unclassified failure',2,true],
+  [2,'unclassified failure',2,true],
+  [3,'NOSE_DUPLICATION_BLOCKED: fixture',2,true],
+]) test(`installed dispatcher classifies status ${status} with ${diagnostic}`,t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),`process.stderr.write(${JSON.stringify(diagnostic+'\n')});process.exitCode=${status};`);
+  const installed=install(f.repo,f.source);
+  const result=spawnSync(installed.hook,[],{cwd:f.repo,input:'',encoding:'utf8',timeout:5000});
+  assert.equal(result.status,expected,result.stderr);
+  assert.ok(result.stderr.startsWith(diagnostic+'\n'));
+  assert.equal(result.stderr.includes('Failure record: fixture-history'),recorded);
+});
+test('installed dispatcher records a signaled child as unavailable',t=>{
+  const f=fixture(t);
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),"process.kill(process.pid,'SIGTERM');");
+  const installed=install(f.repo,f.source);
+  const result=spawnSync(installed.hook,[],{cwd:f.repo,input:'',encoding:'utf8',timeout:5000});
+  assert.equal(result.status,2,result.stderr);
+  assert.match(result.stderr,/NOSE_CHECK_UNAVAILABLE: Nose gate could not complete/);
+  assert.match(result.stderr,/Failure record: fixture-history/);
 });
 test('corrupted active payload is unavailable and is replaced on reinstall',t=>{
   const f=fixture(t),output=join(f.temp,'out');
