@@ -5,7 +5,7 @@ description: Split requested changes into responsibility-scoped local commits an
 
 # Commit
 
-Create commits from individual behavior and ownership changes, then name them. For changes spanning multiple responsibilities, follow the gates below: inventory, reviewed partition, staged-diff reconciliation, commit. Decide routine boundaries without asking the user to approve the split.
+Create small, complete commits, each expressing one logical change with its direct evidence, then name them. A responsibility is a starting boundary, not proof that its entire implementation belongs in one commit. Atomicity means HEAD plus the commit forms a coherent working step without later repairs; it does not require cherry-picking the commit without its prerequisites. Optimize for understanding and verification, not the largest possible commit count. For changes spanning multiple logical changes, follow the gates below: inventory, reviewed partition, staged-diff reconciliation, commit. Decide routine boundaries without asking the user to approve the split.
 
 Treat committing already-verified changes as packaging work. The default path is diff inspection, one bounded partition review when needed, precise staging, required hooks and commit readback. Do not create validation worktrees, install dependencies, start test runtimes or launch a second product review merely because commits are being split.
 
@@ -19,22 +19,26 @@ Account for pre-existing edits by purpose. Requested work may have been dirty be
 
 Read the actual diff and relevant callers. List each changed behavior or ownership contract, with the paths and hunks implementing it. Include changes within a single file and supporting contract, persistence, service, and caller responsibilities where they exist. Do not start by assigning broad feature titles to file lists.
 
-For example, one scheduler fix may change retained cleanup state, cleanup execution, displayed scheduler status, and who may disable a job. These are candidate boundaries even when they share a file. Conversely, an API change and the caller adaptation needed to keep that API usable can form one responsibility. Do not manufacture layers or split by file count, line count, or a desired number of commits.
+For example, one scheduler fix may change retained cleanup state, cleanup execution, displayed scheduler status, and who may disable a job. These are candidate boundaries even when they share a file. Conversely, an API change and the caller adaptation needed to keep that API usable can form one responsibility. Inspect additions/deletions, files touched, and distinct questions a reviewer must answer within each candidate. Size is a signal to look for smaller steps, not a quota or grounds for automatic rejection. Prefer a useful part of a feature over its complete delivery bundle; do not manufacture layers to reach a desired commit count.
 
-A simple correction with one responsibility can proceed directly to staging after a concise boundary check. Use the next two gates when the inventory contains multiple responsibilities, including during a requested repartition.
+A small correction implementing one logical change can proceed directly to staging after a concise boundary check. Use the next two gates when the inventory contains multiple logical changes or uncertain boundaries, including during a requested repartition. Several assertions or review questions can support one contract; they do not automatically imply several commits.
 
-## 2. Record the partition and justify combined responsibilities
+## 2. Record the partition and justify boundaries
 
 Before staging, record the partition in an existing task note or concise progress artifact. Keep this working record out of commits unless requested. Each row must contain:
 
-| Group | Behavior or ownership responsibility | Paths and specific hunks | Prerequisites | Smallest relevant check | Combined-responsibility evidence, if any |
+| Group | Logical change and resulting behavior | Paths/hunks and estimated changed lines | Prerequisites | Smallest relevant check | Boundary rationale |
 | --- | --- | --- | --- | --- | --- |
 
 Assign every in-scope inventory item to one group; identify unrelated work separately. A whole-file entry is sufficient only when all its changes have that owner. Keep direct regressions, required generated output, and mandatory usage documentation with their owner. Independent documentation, tool operations, and tests of unrelated behaviors must not become a miscellaneous final commit.
 
+Distinguish direct regression tests from broader coverage even when both concern the same feature. Existing-behavior tests, test refactoring, and substantial integration infrastructure can be useful separate steps; keep each step exercised and passing rather than introducing unused scaffolding or a failing test-only commit. A shared fixture or the phrase "required for regression prevention" does not establish that all test scenarios are inseparable.
+
+For example, correcting a runtime contract across two callers can remain one change with its direct regressions and minimal test configuration. Separately proving recovery of persisted state can be another complete change when it adds useful coverage without completing a missing part of that fix. Different feature names, files, fields, or test cases alone do not establish boundaries. Conversely, a CI policy change may warrant its own commit even if only two lines; line count does not decide either direction.
+
 Separate independently revertible responsibilities by default. Order dependencies from foundation to consumer: an import usually establishes order, not a reason to combine. A tested foundation can land before its caller. Keep behavior-changing activation guards with the caller that makes them usable when landing them earlier would break an existing path.
 
-To combine responsibilities, name the exact intermediate build or behavior failure and its source dependency or focused-check evidence. First try prerequisite ordering and smaller hunks; record why those do not resolve it. A shared feature, file, fixture, user symptom, or vague claim of an import cycle is insufficient. Combine only the parts needed to preserve that invariant. Choose commit subjects after these boundaries hold.
+Justify boundaries in both directions. Split when the hunks express distinct, independently useful changes; keep hunks together when they implement and prove one contract, or splitting would leave incomplete behavior or scatter the context needed to understand it. A hypothetical split need not break the build to be a poor boundary. A shared feature, file, fixture, or user symptom alone is insufficient evidence for combining. If dependency breakage is the reason to combine, identify the exact source dependency and first consider prerequisite ordering or smaller hunks. Do not invent scaffolding, new tests, or product changes merely to manufacture additional commits in a history-only repartition. Choose commit subjects after these boundaries hold.
 
 ## 3. Review the partition before staging
 
@@ -42,7 +46,7 @@ For a multi-responsibility inventory, use one fresh-context, read-only subagent 
 
 Keep this review confined to commit boundaries and specific dependency edges. It must not run tests, install dependencies, create worktrees, perform whole-project QA, or repeat a product/security review. While it runs, prepare messages and selective patches; wait for its verdict before staging. Reuse a partition verdict already covering the same inventory and boundaries.
 
-Ask it to check both directions: find a behavior that could be reverted independently inside a proposed group, and find a proposed split that would leave a broken intermediate contract. Require hunk-level evidence, not a judgment based on group names or diff size.
+Ask it to check both directions: identify distinct logical changes hidden in a group, and identify fragments that should be combined into one complete, understandable step. Inspect the largest group, but do not require a split merely because it is largest. Require hunk-level evidence of distinct intent, contract cohesion, or intermediate dependencies; group names, diff size, and "mostly tests" alone do not justify a verdict. Retain a supported boundary when challenged; do not increase the count without new evidence. Once each group is small in scope, complete, and reviewable, stop subdividing.
 
 The result must be `APPROVE`, `REPARTITION`, or `INCONCLUSIVE`, with evidence for the verdict. `APPROVE` names the checked boundaries and dependencies; `REPARTITION` identifies the separable behaviors or broken dependency and proposes a corrected boundary/order. Incorporate corrections and obtain a fresh review of the changed groups before staging; unaffected reviewed groups need not be re-reviewed. An acknowledgment, missing result or unsupported approval is not a pass. Do not commit affected groups while findings remain unresolved.
 
@@ -74,7 +78,8 @@ Stage explicit paths or hunks for one reviewed group or the single-responsibilit
 - every staged hunk belongs to this group; no neighboring responsibility was pulled in by staging a whole file;
 - all changes necessary for this group's contract are present, and its prerequisites are already in HEAD;
 - imports, fixtures and checks refer to HEAD plus this staged tree, not later working-tree changes;
-- the subject describes the actual staged behavior without hiding another independently revertible decision.
+- the subject describes the actual staged behavior without hiding another independently revertible decision;
+- the actual changed-line count, touched files, and review questions still match the partition; unexpectedly broad test or setup hunks trigger another boundary check.
 
 A tree hash identifies the reviewed snapshot; it does not prove semantic cohesion. An unmapped hunk, missing prerequisite, or newly discovered responsibility stops this commit. Correct the staging, or return affected groups to partition review if their boundaries changed. Any index change after reconciliation requires reconciliation again. Only commit the reconciled tree, then compare the actual commit's parent and tree with that record; a mismatch stops later commits until resolved within the authorized scope.
 
@@ -93,3 +98,10 @@ For an authorized repartition of existing local commits, retain a recovery ref a
 Final-tree equality proves content preservation only. Require it together with reviewed boundaries and source-inspected dependency order before moving the original branch. Execute intermediate snapshots only under the conditions above, and distinguish those executed checks from static inspection in the report.
 
 At the end, reconcile inventory items against actual commits and remaining staged, unstaged and untracked work. Extra later commits do not repair an earlier mixed boundary. Report hashes with their responsibilities, review method, checks and limitations, and anything left uncommitted. Stop after the authorized local commits; pushing, PR publication and published-history rewriting need their own authorization.
+
+## Boundary references
+
+- [GitHub: Write Better Commits, Build Better Projects](https://github.blog/developer-skills/github/write-better-commits-build-better-projects/): split distinct changes even when short; combine incomplete fragments into stable, atomic commits.
+- [Google: Small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html): small self-contained review units with related tests; avoid splitting so finely that implications become difficult to understand. CLs are review units, not necessarily individual Git commits; line-count examples are guidance, not limits.
+- [Git: SubmittingPatches](https://git-scm.com/docs/SubmittingPatches): logically separate commits; a long explanation can signal a missing boundary.
+- [Linux: Separate your changes](https://cdn.kernel.org/doc/html/latest/process/submitting-patches.html#separate-your-changes): understandable, verifiable patches may depend on earlier patches while preserving working intermediate states.
