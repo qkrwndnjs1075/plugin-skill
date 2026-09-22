@@ -115,6 +115,43 @@ function memberBaseline(family) {
     intentional: [{ ...family, reason: "Independent ownership" }] };
 }
 
+test("remote and reviewed reductions preserve multiset decisions across overlapping families", () => {
+  const members = ["a", "b", "c"];
+  const combinations = [[]];
+  for (let size = 1; size <= 4; size++) {
+    for (const prefix of combinations.filter(value => value.length === size - 1)) {
+      for (const member of members) combinations.push([...prefix, member]);
+    }
+  }
+  const families = [...new Map(combinations.slice(1).map(value => {
+    const family = memberFamily(...value);
+    return [family.fingerprint, family];
+  })).values()];
+  const references = [memberFamily("c", "a", "a", "b"), memberFamily("c", "b", "b"), memberFamily("a", "b", "c")];
+  // Deliberately unsorted: persisted membership permits either ordering.
+  references[0].memberHashes.reverse();
+  const subset = (candidate, reference) => candidate.length < reference.length
+    && candidate.every(member => candidate.filter(value => value === member).length
+      <= reference.filter(value => value === member).length);
+  const exact = new Set(references.map(family => family.fingerprint));
+  const expected = families.filter(family => !exact.has(family.fingerprint)
+    && !references.some(reference => subset(family.memberHashes, reference.memberHashes)));
+  assert.deepEqual(filterRemoteExisting(families, references), expected);
+  const baseline = {schemaVersion: 1, noseVersion: "nose fixture", accepted: [],
+    intentional: references.map(family => ({...family, reason: "Independent fixtures"}))};
+  const candidates = families.filter(family => !exact.has(family.fingerprint));
+  assert.deepEqual(filterReviewed(candidates, baseline, baseline.noseVersion), expected);
+  const reductions = reviewedReductions(candidates, baseline, baseline.noseVersion);
+  for (const reduction of reductions) {
+    const family = candidates.find(candidate => candidate.fingerprint === reduction.fingerprint);
+    const reference = references.find(candidate => subset(family.memberHashes, candidate.memberHashes));
+    assert.equal(reduction.reviewedFingerprint, reference.fingerprint);
+    assert.equal(reduction.removedMembers, reference.memberHashes.length - family.memberHashes.length);
+  }
+  assert.equal(reductions.length, candidates.length - expected.length);
+  assert.deepEqual(filterRemoteExisting(families, []), families);
+});
+
 test("a missing reviewed family permits a strict member reduction and reports its counts", () => {
   const original = memberFamily("a", "a", "b");
   const reduced = memberFamily("a", "b");

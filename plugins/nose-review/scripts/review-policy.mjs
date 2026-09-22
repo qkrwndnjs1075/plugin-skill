@@ -64,9 +64,10 @@ export function reviewedReductions(families, baseline, version, currentFamilies 
   const present = new Set(currentFamilies.map((family) => family.fingerprint));
   const exact = new Set([...baseline.accepted, ...baseline.intentional.map((entry) => entry.fingerprint)]);
   const eligible = baseline.intentional.filter((entry) => entry.memberHashes && !present.has(entry.fingerprint));
+  const findReduction = reductionMatcher(eligible, families);
   return families.flatMap((family) => {
     if (exact.has(family.fingerprint) || !validMembership(family)) return [];
-    const reviewed = eligible.find((entry) => strictSubmultiset(family.memberHashes, entry.memberHashes));
+    const reviewed = findReduction(family.memberHashes);
     return reviewed ? [{
       fingerprint: family.fingerprint,
       reviewedFingerprint: reviewed.fingerprint,
@@ -80,9 +81,34 @@ export function reviewedReductions(families, baseline, version, currentFamilies 
 export function filterRemoteExisting(families, remoteFamilies) {
   const verifiableRemote = remoteFamilies.filter(validMembership);
   const exact = new Set(verifiableRemote.map((family) => family.fingerprint));
+  const findReduction = reductionMatcher(verifiableRemote, families);
   return families.filter((family) => !validMembership(family)
     || (!exact.has(family.fingerprint)
-      && !verifiableRemote.some((remote) => strictSubmultiset(family.memberHashes, remote.memberHashes))));
+      && !findReduction(family.memberHashes)));
+}
+
+function reductionMatcher(families, candidates) {
+  const byMember = new Map();
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate.memberHashes)) continue;
+    for (const member of candidate.memberHashes) {
+      if (!byMember.has(member)) byMember.set(member, []);
+    }
+  }
+  for (const family of families) {
+    for (const member of new Set(family.memberHashes)) {
+      byMember.get(member)?.push(family);
+    }
+  }
+  return members => {
+    let candidates;
+    for (const member of members) {
+      const matches = byMember.get(member);
+      if (!matches?.length) return undefined;
+      if (!candidates || matches.length < candidates.length) candidates = matches;
+    }
+    return candidates?.find(family => strictSubmultiset(members, family.memberHashes));
+  };
 }
 
 export function filterChangedCandidates(families, changedFiles) {
