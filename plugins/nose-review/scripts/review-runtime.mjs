@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join, extname, dirname, parse } from 'node:path';
+import { accessSync, constants, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join, extname, dirname, parse, delimiter, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir, homedir, availableParallelism } from 'node:os';
 import { createMemberHasher, hash } from './review-policy.mjs';
+import { readScanResult, writeScanResult } from './scan-result-cache.mjs';
 export { hash } from './review-policy.mjs';
 
 export const scanTimeoutMs = 600_000;
@@ -111,7 +113,35 @@ export function register(root, session) {
     return record;
   });
 }
-export function scan(root, verifiedFiles, cacheOwner = root) {
+function resultIdentity(root, args, version, commit, env) {
+  if (!commit) return null;
+  try {
+    const executable = (env.PATH ?? '').split(delimiter).map(directory=>resolve(root,directory,'nose'))
+      .find(path=>{try {accessSync(path,constants.X_OK);return lstatSync(realpathSync(path)).isFile();} catch {return false;}});
+    if (!executable) return null;
+    const config = spawnSync(executable,[...args,'--show-config'],{cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
+    if (config.status !== 0) return null;
+    const settings = JSON.parse(config.stdout);
+    // External configuration can refer to mutable files outside the verified tree.
+    if (settings.schema !== 'nose.query-config/v1' || settings.config_file !== null
+      || !settings.query || settings.query['ignore-file'] !== null
+      || settings.query['semantic-pack-lock'] !== null
+      || !Array.isArray(settings.query['semantic-packs']) || settings.query['semantic-packs'].length) return null;
+    const scripts=dirname(fileURLToPath(import.meta.url));
+    const policy=['review-runtime.mjs','review-policy.mjs','nose-pre-push.mjs','scan-result-cache.mjs']
+      .map(name=>[name,hash(readFileSync(join(scripts,name)))]);
+    const ignores=spawnSync('git',['config','--path','--get-all','core.excludesFile'],{cwd:root,env,encoding:'utf8',timeout:5000});
+    if (ignores.error || ![0,1].includes(ignores.status)) return null;
+    const ignorePaths=[join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(),'.config'),'git','ignore'),
+      ...ignores.stdout.trim().split('\n').filter(Boolean).map(path=>resolve(root,path))];
+    const globalIgnores=[...new Set(ignorePaths)].map(path=>[path,existsSync(path)?hash(readFileSync(path)):null]);
+    return {commit,root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
+      policy,args,settings,globalIgnores,node:process.version,
+      environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
+  } catch { return null; }
+}
+
+export function scan(root, verifiedFiles, cacheOwner = root, commitIdentity) {
   const parallelism = availableParallelism();
   const threads = process.env.RAYON_NUM_THREADS ?? String(Math.min(2, parallelism));
   if (!/^[1-9]\d*$/.test(threads) || !Number.isSafeInteger(Number(threads)) || Number(threads) > parallelism)
@@ -126,14 +156,27 @@ export function scan(root, verifiedFiles, cacheOwner = root) {
   const temporary = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
     const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
+    const args=['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions];
+    const env={...process.env,RAYON_NUM_THREADS:threads};
+    const identity=verifiedFiles === undefined ? null : resultIdentity(root,args,version.stdout.trim(),commitIdentity,env);
+    const resultCache={directory:stateRoot(realpathSync(cacheOwner)),identity};
+    const cached=identity ? readScanResult(resultCache) : null;
+    if (cached && cached.noseVersion===version.stdout.trim() && JSON.stringify(cached.files)===JSON.stringify(before)) {
+      const memberHashesForFamily=createMemberHasher(root);
+      const verified=cached.families.every(family=>hash(JSON.stringify(memberHashesForFamily(family)))===family.fingerprint);
+      if (verified && JSON.stringify(before)===JSON.stringify(snapshot(root,verifiedFiles))) {
+        process.stderr.write(`[nose scan] verified result cache hit for ${commitIdentity}; ${cached.families.length} families\n`);
+        return cached;
+      }
+    }
     const reportPath=join(temporary,'report.json');
     const reportDescriptor=openSync(reportPath,'wx',0o600);
     let result;
     try {
       process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; workers ${threads}; reusable cache ${cache}; budget ${scanTimeoutMs / 1000}s\n`);
-      result = spawnSync('nose',['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions],{
+      result = spawnSync('nose',args,{
         cwd:root,
-        env:{...process.env,RAYON_NUM_THREADS:threads},
+        env,
         encoding:'utf8',
         timeout:scanTimeoutMs,
         maxBuffer:8*1024*1024,
@@ -160,6 +203,9 @@ export function scan(root, verifiedFiles, cacheOwner = root) {
     });
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
     process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
-    return {noseVersion:version.stdout.trim(),families,files:before};
+    const verifiedResult={noseVersion:version.stdout.trim(),families,files:before};
+    if (identity && JSON.stringify(identity)===JSON.stringify(resultIdentity(root,args,version.stdout.trim(),commitIdentity,env)))
+      writeScanResult({...resultCache,result:verifiedResult});
+    return verifiedResult;
   } finally { rmSync(temporary,{recursive:true,force:true}); }
 }

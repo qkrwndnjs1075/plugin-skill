@@ -5,7 +5,7 @@ import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, r
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
+import { git, hash, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline, withReviewLock } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { scanCommitSecrets } from './commit-secrets.mjs';
@@ -103,7 +103,7 @@ function scanArchive(root, sha, operation, materializeSymlinks, state) {
         if(['.gitignore','.ignore','nose.ignore.json'].includes(file.split('/').at(-1))) rmSync(join(directory,file),{force:true});
       }
     }
-    return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]));
+    return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]), `${sha}:${hash(entries.join('\0'))}`);
   } finally {
     rmSync(directory, {recursive:true, force:true});
     rmSync(archiveDirectory, {recursive:true, force:true});
@@ -218,8 +218,8 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         advise(`${localRef}: duplicate-analysis inputs unchanged from ${comparisonSha}; secrets ${record.secrets.status}`);
         continue;
       }
-      const local = archivedScan(root, localSha, (directory, files) => {
-        const result=scan(directory, files, root);
+      const local = archivedScan(root, localSha, (directory, files, identity) => {
+        const result=scan(directory, files, root, identity);
         const policy=baselineCandidates(directory, root, result, record.warnings, record.reductions);
         return {noseVersion:result.noseVersion, families:result.families,
           candidates:policy.candidates, hasBaseline:policy.hasBaseline,
@@ -227,7 +227,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
       });
       if(local.baselineSource) record.baselineSource=local.baselineSource;
       if (comparisonSha) {
-        const remote=archivedScan(root, comparisonSha, (directory, files) => scan(directory, files, root));
+        const remote=archivedScan(root, comparisonSha, (directory, files, identity) => scan(directory, files, root, identity));
         if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
         local.candidates=filterRemoteExisting(local.candidates,remote.families);
         const changedFiles=git(root,['diff','--name-only','-z',comparisonSha,localSha,'--']).split('\0').filter(Boolean);

@@ -124,3 +124,39 @@ test('scans bound workers and reuse the project cache across temporary snapshots
   }
   assert.equal(readFileSync(calls,'utf8'),count);
 });
+
+test('verified commit results reuse analysis but invalidate tool, environment, config and source changes',t=>{
+  const fixture=mkdtempSync(join(tmpdir(),'nose-result-reuse-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const root=join(fixture,'repo'),bin=join(fixture,'bin'),calls=join(fixture,'calls');
+  mkdirSync(root);mkdirSync(bin);
+  writeFileSync(join(root,'a.js'),'export const a=1;\n');
+  const executable=join(bin,'nose');
+  writeFileSync(executable,'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs');
+    if(process.argv.includes('--version')) console.log('nose fixture');
+    else if(process.argv.includes('--show-config')) console.log(JSON.stringify({schema:'nose.query-config/v1',
+      config_file:fs.existsSync('nose.toml')?'nose.toml':null,
+      query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
+    else {fs.appendFileSync(${JSON.stringify(calls)},'query\\n');console.log(JSON.stringify({families:[]}));}
+  `,{mode:0o700});
+  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT,NOSE_TEST_CONTEXT:process.env.NOSE_TEST_CONTEXT,XDG_CONFIG_HOME:process.env.XDG_CONFIG_HOME};
+  Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state'),XDG_CONFIG_HOME:join(fixture,'config')});
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const run=()=>scan(root,['a.js'],root,'a'.repeat(40));
+  const count=()=>readFileSync(calls,'utf8').trim().split('\n').length;
+  const first=run();assert.deepEqual(run(),first);assert.equal(count(),1);
+  process.env.NOSE_TEST_CONTEXT='changed';run();assert.equal(count(),2);
+  writeFileSync(executable,readFileSync(executable,'utf8')+'\n// same version, changed executable\n');
+  run();assert.equal(count(),3);
+  writeFileSync(join(root,'a.js'),'export const a=2;\n');
+  run();assert.equal(count(),4);
+  writeFileSync(join(root,'nose.toml'),'[query]\n');
+  run();run();assert.equal(count(),6);
+  rmSync(join(root,'nose.toml'));
+  mkdirSync(join(fixture,'config','git'),{recursive:true});
+  writeFileSync(join(fixture,'config','git','ignore'),'generated.js\n');
+  run();assert.equal(count(),7);
+  writeFileSync(join(fixture,'config','git','ignore'),'vendor.js\n');
+  run();assert.equal(count(),8);
+});

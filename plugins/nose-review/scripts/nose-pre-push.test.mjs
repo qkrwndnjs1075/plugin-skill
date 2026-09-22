@@ -46,6 +46,10 @@ test('a new branch blocks unreviewed duplicates independently of working files',
   assert.ok(report.candidates.length > 0, first.stderr);
   assert.equal(report.refs[0].localSha, f.sha);
   assert.ok(report.candidates.every(family => family.locations.every(location => !location.file.startsWith('/'))));
+  const repeated=f.run();
+  assert.equal(repeated.status,1,repeated.stderr);
+  assert.match(repeated.stderr,/verified result cache hit/);
+  assert.deepEqual(f.report().candidates,report.candidates);
   assert.equal(readFileSync(join(f.root, 'a.js'), 'utf8'), 'export const a = 1;\n');
 });
 
@@ -57,6 +61,7 @@ test('local and remote scans reuse one locked source path without carrying files
   writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
     const fs=require('node:fs'),path=require('node:path');
     if(process.argv.includes('--version'))console.log('nose fixture');
+    else if(process.argv.includes('--show-config'))console.log('{}');
     else {
       const args=process.argv.slice(2),cache=args[args.indexOf('--cache-dir')+1];
       fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({cwd:process.cwd(),cache,local:fs.existsSync('local-only.js')})+'\\n');
