@@ -1,13 +1,22 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { hash as digest } from './review-policy.mjs';
 
-const schema = 1;
+const schema = 2;
 const digestPattern = /^[a-f0-9]{64}$/;
-const maxEntryBytes = 128 * 1024 * 1024;
-const maxTotalBytes = 512 * 1024 * 1024;
+const maxEntryBytes = 512 * 1024 * 1024;
+const maxTotalBytes = 2 * 1024 * 1024 * 1024;
 const maxEntries = 32;
+const maxRecordBytes = 16 * 1024 * 1024;
+
+function fail(reason) { throw Object.assign(new Error(reason), {cacheReason: reason}); }
+function report(onEvent, operation, outcome, reason) {
+  try { onEvent?.({operation, outcome, reason}); } catch {}
+}
+function reason(error) {
+  return error.cacheReason ?? (error.code === 'ENOENT' ? 'not-found' : error.code === 'ELOOP' ? 'unsafe-file' : 'io-error');
+}
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -16,7 +25,7 @@ function canonical(value) {
 }
 
 function identityDigest(identity) {
-  if (!identity || typeof identity !== 'object' || Array.isArray(identity) || !Object.keys(identity).length) throw new Error('Scan identity is required');
+  if (!identity || typeof identity !== 'object' || Array.isArray(identity) || !Object.keys(identity).length) fail('invalid-identity');
   return digest(JSON.stringify(canonical(identity)));
 }
 
@@ -25,20 +34,28 @@ function privateDirectory(path, create) {
     try { mkdirSync(path, {mode: 0o700}); } catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
   const stat = lstatSync(path);
-  if (!stat.isDirectory() || (stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error('Cache directory must be private');
+  if (!stat.isDirectory() || (stat.mode & 0o077) || stat.uid !== process.getuid()) fail('unsafe-directory');
 }
 
-function readPrivate(path, limit) {
+function openPrivate(path, limit) {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid() || (stat.mode & 0o077) || stat.size > limit) throw new Error('Unsafe cache file');
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid() || (stat.mode & 0o077)) fail('unsafe-file');
+    if (stat.size > limit) fail('entry-too-large');
+    return descriptor;
+  } catch (error) { closeSync(descriptor); throw error; }
+}
+
+function readPrivate(path, limit) {
+  const descriptor = openPrivate(path, limit);
+  try {
     return readFileSync(descriptor);
   } finally { closeSync(descriptor); }
 }
 
 function context(directory, create) {
-  if (!lstatSync(directory).isDirectory()) throw new Error('Invalid state directory');
+  if (!lstatSync(directory).isDirectory()) fail('unsafe-directory');
   const root = join(directory, 'scan-results');
   privateDirectory(root, create);
   const keyPath = join(root, 'key');
@@ -47,7 +64,7 @@ function context(directory, create) {
     catch (error) { if (error.code !== 'EEXIST') throw error; }
   }
   const key = readPrivate(keyPath, 32);
-  if (key.length !== 32) throw new Error('Invalid cache key');
+  if (key.length !== 32) fail('invalid-key');
   return {root, key};
 }
 
@@ -69,40 +86,112 @@ function validResult(result) {
       && Number.isSafeInteger(location.start) && Number.isSafeInteger(location.end) && location.start > 0 && location.end >= location.start));
 }
 
+function validateResult(result) {
+  if (result?.files && typeof result.files === 'object' && Array.isArray(result.families)
+    && result.families.some(family => Array.isArray(family?.locations)
+      && family.locations.some(location => sourcePath(location?.file) && !Object.hasOwn(result.files, location.file)))) fail('missing-source-member');
+  if (!validResult(result)) fail('invalid-result');
+}
+
 // Only call after scan() has completed source-stability and membership verification.
 // Identity must include every scan input and policy/scanner implementation identity.
-export function writeScanResult({directory, identity, result}) {
+export function writeScanResult({directory, identity, result, onEvent}) {
   let temporary;
   try {
-    if (!validResult(result)) return false;
+    validateResult(result);
     const id = identityDigest(identity);
     const {root, key} = context(directory, true);
-    const payload = JSON.stringify({schema, identity: id, result});
-    const envelope = JSON.stringify({payload, mac: createHmac('sha256', key).update(payload).digest('hex')});
-    if (Buffer.byteLength(envelope) > maxEntryBytes) return false;
     const destination = join(root, `${id}.json`);
-    try { readPrivate(destination, maxEntryBytes); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try { closeSync(openPrivate(destination, maxEntryBytes)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     temporary = join(root, `${id}.${randomBytes(12).toString('hex')}.tmp`);
-    writeFileSync(temporary, envelope, {flag: 'wx', mode: 0o600});
+    const descriptor = openSync(temporary, 'wx', 0o600);
+    try {
+      const mac = createHmac('sha256', key);
+      let bytes = 65;
+      const record = value => {
+        const buffer = Buffer.from(`${JSON.stringify(value)}\n`);
+        bytes += buffer.length;
+        if (buffer.length > maxRecordBytes) fail('record-too-large');
+        if (bytes > maxEntryBytes) fail('entry-too-large');
+        mac.update(buffer);
+        writeFileSync(descriptor, buffer);
+      };
+      const {families, files, ...metadata} = result;
+      record({schema, identity: id, metadata});
+      for (const [file, hash] of Object.entries(files)) record({file, hash});
+      for (const family of families) record({family});
+      writeFileSync(descriptor, `${mac.digest('hex')}\n`);
+    } finally { closeSync(descriptor); }
     renameSync(temporary, destination);
     prune(root);
+    report(onEvent, 'write', 'stored', 'verified-result');
     return true;
-  } catch { return false; }
+  } catch (error) { report(onEvent, 'write', 'skipped', reason(error)); return false; }
   finally { if (temporary) { try { rmSync(temporary, {force: true}); } catch {} } }
 }
 
-export function readScanResult({directory, identity}) {
+function* records(descriptor) {
+  const chunk = Buffer.alloc(64 * 1024);
+  let parts = [], length = 0, total = 0;
+  for (let count; (count = readSync(descriptor, chunk)) > 0;) {
+    total += count;
+    if (total > maxEntryBytes) fail('entry-too-large');
+    let start = 0;
+    for (let index = 0; index < count; index++) {
+      if (chunk[index] !== 10) continue;
+      const part = chunk.subarray(start, index + 1);
+      length += part.length;
+      if (length > maxRecordBytes) fail('record-too-large');
+      yield Buffer.concat([...parts, part], length);
+      parts = []; length = 0; start = index + 1;
+    }
+    if (start < count) {
+      parts.push(Buffer.from(chunk.subarray(start, count)));
+      length += count - start;
+      if (length > maxRecordBytes) fail('record-too-large');
+    }
+  }
+  if (length) fail('invalid-format');
+}
+
+export function readScanResult({directory, identity, onEvent}) {
+  let descriptor;
   try {
     const id = identityDigest(identity);
     const {root, key} = context(directory, false);
-    const envelope = JSON.parse(readPrivate(join(root, `${id}.json`), maxEntryBytes).toString('utf8'));
-    if (typeof envelope.payload !== 'string' || typeof envelope.mac !== 'string' || !digestPattern.test(envelope.mac)) return null;
-    const expected = createHmac('sha256', key).update(envelope.payload).digest();
-    if (!timingSafeEqual(expected, Buffer.from(envelope.mac, 'hex'))) return null;
-    const payload = JSON.parse(envelope.payload);
-    if (payload.schema !== schema || payload.identity !== id || !validResult(payload.result)) return null;
-    return payload.result;
-  } catch { return null; }
+    descriptor = openPrivate(join(root, `${id}.json`), maxEntryBytes);
+    const mac = createHmac('sha256', key);
+    let result, authenticated = false, familiesStarted = false;
+    for (const line of records(descriptor)) {
+      if (authenticated) fail('invalid-format');
+      const text = line.toString('utf8').slice(0, -1);
+      if (digestPattern.test(text)) {
+        if (!timingSafeEqual(mac.digest(), Buffer.from(text, 'hex'))) fail('authentication-failed');
+        authenticated = true;
+        continue;
+      }
+      mac.update(line);
+      let record;
+      try { record = JSON.parse(text); } catch { fail('invalid-format'); }
+      if (!result) {
+        if (record?.schema !== schema) fail('schema-mismatch');
+        if (record.identity !== id) fail('identity-mismatch');
+        if (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata)) fail('invalid-format');
+        result = {...record.metadata, files: {}, families: []};
+      } else if (record && Object.hasOwn(record, 'family')) {
+        familiesStarted = true;
+        result.families.push(record.family);
+      } else {
+        if (familiesStarted || !record || !sourcePath(record.file) || Object.hasOwn(result.files, record.file)) fail('invalid-result');
+        Object.defineProperty(result.files, record.file, {value: record.hash, enumerable: true, configurable: true, writable: true});
+      }
+    }
+    if (!authenticated) fail('authentication-failed');
+    validateResult(result);
+    report(onEvent, 'read', 'hit', 'verified-result');
+    return result;
+  } catch (error) { report(onEvent, 'read', 'miss', reason(error)); return null; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 
 function prune(root) {
@@ -110,7 +199,7 @@ function prune(root) {
     const path = join(root, name);
     const stat = lstatSync(path);
     return {path, stat};
-  }).filter(({stat}) => stat.isFile()).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs || a.path.localeCompare(b.path));
+  }).filter(({stat}) => stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid() && !(stat.mode & 0o077)).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs || a.path.localeCompare(b.path));
   let bytes = 0;
   for (const [index, {path, stat}] of entries.entries()) {
     bytes += stat.size;
