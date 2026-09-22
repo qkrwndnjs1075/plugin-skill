@@ -44,9 +44,11 @@ Reuse verification that still covers the same content, dependencies, configurati
 
 Check intermediate dependencies from source by default. Run a targeted intermediate check only when explicitly required or when a named uncertainty remains after inspection; use code and dependencies from that snapshot. Do not create validation worktrees, install dependencies, or start test runtimes merely to package verified changes. Test discovery and import-only runs may still be expensive. Report reused final-tree checks separately from any intermediate snapshots actually executed.
 
-Write messages in the repository's language and style. Use a concrete subject; add a short problem/result explanation, relevant checks and issue context when useful. Do not fill a template with file lists, session history, or verification that did not occur.
+Write messages in the repository's language and style. Every commit must have a concrete subject and a non-empty body, including small changes. Start the body with the concrete previous behavior or missing capability and its consequence. Explain the cause, why the chosen change addresses it, and the resulting behavior in connected prose. Name specific mechanisms, APIs or values when they make the reasoning clear. Repeating the subject or listing edited files is not enough; the reader should understand the change without the conversation.
 
-Commit, then inspect the resulting commit's paths and diff summary against the staged change. Inspect unexpected differences before continuing. At the end, report commit hashes and purposes, applicable checks and limits, and remaining work. Continue to a push or PR only when separately authorized.
+Scale the explanation to the change instead of filling a fixed template. Include relevant tradeoffs and behavior that must remain intact. When reporting verification, explain what the check established and any important limit; a test count alone does not explain the evidence. If an earlier test missed the bug, explain the mismatch between its setup and real behavior. Do not invent causes, alternatives, checks or results, or turn the body into a session transcript.
+
+Commit, then inspect the resulting commit's subject, body, paths and diff summary against the staged change. Inspect unexpected differences before continuing. At the end, report commit hashes and purposes, applicable checks and limits, and remaining work. Continue to a push or PR only when separately authorized.
 
 ## When repartitioning existing commits
 
@@ -56,6 +58,8 @@ Preserve a recovery ref and the original final tree for the authorized range. Re
 
 These are supporting sources, not required reading on every invocation:
 
+- [Moonlight: event-price polling](https://github.com/corca-ai/moonlight/commit/9bb8c9331ed1e3bbe913a02132d356a39603f6f9): explains the redundant work, why existing lifecycle events suffice, and where payment validation remains.
+- [Moonlight: public pricing lookup](https://github.com/corca-ai/moonlight/commit/a8d56a2c1212d7cbe2b531911a7b89c6fa984eb8): connects the visible failure to application wiring, the fix, and why the earlier test missed it.
 - [GitHub: Write Better Commits, Build Better Projects](https://github.blog/developer-skills/github/write-better-commits-build-better-projects/): small scope and complete commits.
 - [Google: Small CLs](https://google.github.io/eng-practices/review/developer/small-cls.html): related tests and understandable review units; CLs are not necessarily individual Git commits.
 - [Linux: Separate your changes](https://cdn.kernel.org/doc/html/latest/process/submitting-patches.html#separate-your-changes): distinct logical changes and working intermediate states.
