@@ -213,9 +213,11 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   Source lines and span hashes are reused only within a scan, whose final source
   snapshot must still match. Manual acceptance always starts a fresh reader.
 - Complete commit results use a separate `scan-results` cache in that state
-  directory, limited to 32 entries and 512 MiB (128 MiB per entry). Entries are
-  authenticated with a private local key. Invalid, modified or oversized entries
-  fall back to analysis. Identity includes the commit and actual Git tree
+  directory, limited to 32 entries and 2 GiB (512 MiB per entry, 16 MiB per record).
+  Source and family records are serialized incrementally, avoiding a second
+  whole-report JSON string. A private-key MAC authenticates the complete entry
+  before a loaded result is returned. Invalid, modified or oversized entries
+  fall back to analysis. Older cache formats are misses. Identity includes the commit and actual Git tree
   inventory, scanner executable bytes/version, wrapper policy, effective settings,
   global ignore-file contents and an environment digest. Environment values are
   not written to the cache.
@@ -223,6 +225,13 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   ordinary manual working-folder scans also bypass it. The existing Nose-owned
   analysis cache remains available on these paths. Cold full analyses still incur
   the detector's full cost.
+- Result-cache decisions are logged on stderr as `[nose result-cache]` with the
+  operation, outcome and reason: for example `read miss: not-found`,
+  `write skipped: missing-source-member`, `write skipped: entry-too-large`,
+  `identity skipped: external-config`, or `read hit: verified-result`.
+  A loaded entry still has to pass version, source-snapshot and membership checks
+  before the `verified result cache hit` message confirms reuse. CommonJS `.cjs`
+  and short HTML `.htm` files are included in source snapshots.
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
   5 MiB per source file, and 100 MiB total source.

@@ -120,3 +120,50 @@ invalidation scenarios (2) passed again. Refreshed source-bound decisions retain
 four test-only families: independent digest oracle, separate failure assertions,
 and suite-owned temporary-directory lifecycles. Decisions remain in ignored local
 state; unrelated Skill Maintenance findings were outside this recovery scope.
+
+## Large-result cache repair (2026-09-22)
+
+The complete-result cache had two independent blockers in the large Chorus case:
+
+- The wrapper snapshot omitted `.cjs` (and `.htm`), although Nose 0.21.0 supports
+  them. The retained report contains 18 locations in a CommonJS fixture file.
+  Cache validation rejected the whole result because that source was missing from
+  its snapshot. A two-file regression reproduced two scanner calls before the
+  fix and one call followed by verified reuse after it.
+- The retained 49,716-family report occupies 285.99 MiB as formatted JSON. The
+  previous 128 MiB envelope cap was inadequate even after source coverage was
+  fixed. Serializing a whole JSON payload inside another JSON string also added
+  avoidable memory overhead.
+
+The new authenticated record format writes source entries and families
+incrementally. Bounds are 512 MiB per entry, 16 MiB per record, 2 GiB total and
+32 entries. Authentication, schema, membership, source containment and privacy
+checks remain mandatory. Failed or incompatible entries are misses with explicit
+safe reason codes; final source verification still precedes scan-result reuse.
+
+An isolated replay of the retained real report verified all member fingerprints
+against 35,365 current source files, reproduced the old storage rejection, then
+stored and read all 49,716 families without losing any metadata. Cache size was
+204.63 MiB; storage took 1.076s and readback 1.325s. The largest family record was
+513,146 bytes. These timings measure storage/readback only, not a whole push gate.
+Source checking and comparison brought the full QA script to 20.31s; it did not
+launch a new whole-repository Nose scan or seed live cache state from old reports.
+
+The real pre-push regression adds a CommonJS duplicate, compares it with its
+remote base, then repeats the check. Both local and remote verified results are
+reused (zero Nose analyses) with identical blocked candidates. A new or invalidated
+commit still needs its first complete analysis before a result can be reused.
+
+Diagnostics now distinguish identity ineligibility, missing entries, schema or
+authentication failures, missing source members, size bounds, I/O failures and
+source mismatches. Messages contain reason codes, not source text or environment
+values. Upstream engine incremental-admission limits were investigated separately;
+this repair changes only the wrapper's complete-result cache.
+
+Final verification: 125/125 Nose wrapper tests passed, including tampering,
+missing-source diagnostics, >128 MiB round trip, entry/total retention bounds and
+real pre-push local/remote reuse. Installed-source equality holds for all six
+changed plugin files; the installed CommonJS pre-push reuse scenario passed.
+Existing managed hooks in plugin-skill, Chorus, penote and the metrics-management
+worktree passed bootstrap smoke checks. Local installed backup is
+`/Users/park/.codex/backups/nose-large-cache-20260922.tbpez4`.
