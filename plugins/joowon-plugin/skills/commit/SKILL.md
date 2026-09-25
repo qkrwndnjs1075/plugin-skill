@@ -5,7 +5,7 @@ description: Create small, complete local commits from requested changes. Use wh
 
 # Commit
 
-Read the diff, group logical changes, inspect each staged diff, and commit. Keep routine boundary decisions within this flow. This skill does not require a partition table, a separate reviewer, approval verdicts, re-review, or a per-commit evidence ledger. Follow any additional checks explicitly required by the user or repository.
+Read the diff, group logical changes, inspect each staged diff, and commit. Keep routine boundary decisions within this flow. This skill does not require a separate reviewer, approval verdicts, re-review, or a per-commit evidence ledger. Follow any additional checks explicitly required by the user or repository.
 
 ## Scope and source reads
 
@@ -19,10 +19,11 @@ Read the actual diff and reuse those contents. Read callers or HEAD/index versio
 
 Choose boundaries before subjects or commit counts:
 
+- **Inventory responsibilities first.** When the diff spans multiple behaviors or owners, make a short boundary map before staging: the outcome, its implementation and direct tests/docs, prerequisites, and what reverting that group would remove. Keep it in task notes or progress output; do not create a report just for the map. Account for every changed hunk, not only filenames.
 - **Split distinct changes.** Identify a useful result for each group. Different files, fields, tests, or feature names alone do not establish independence; a shared owner or incident alone does not establish cohesion.
 - **Keep one contract complete.** Keep its implementation, necessary caller adaptations, direct regression tests, required generated output, and essential usage documentation together. Independent existing-behavior tests, refactoring, or broader recovery coverage may stand alone. Revertability is a clue, not a reason to separate a fix from its test.
 - **Order prerequisites first.** An import establishes order, not automatic cohesion. Avoid a snapshot that requires later repairs. If a proposed split loses necessary context or breaks a contract, adjust the boundary or order.
-- **Stop at reviewable units.** Use size as a signal to examine scope, not a quota. Reconsider a boundary for a concrete hunk, dependency, or user constraint; do not change the count merely to agree with pressure for more or fewer commits.
+- **Stop at reviewable units.** Before accepting a proposed commit, ask whether a reviewer could accept one of its outcomes and reject another while the accepted outcome still makes sense. If so, split it. A commit message that needs independent storage, UI, runtime, workflow, or deployment clauses is a signal to revisit the boundary. Use size as a signal to examine scope, not a quota. Keep a larger commit only when the apparent parts are one inseparable contract, and name the concrete dependency.
 
 For example, one runtime contract correction across two callers may stay together, while separate persisted-state recovery coverage or a CI execution-policy change may stand alone. Judge the actual hunks rather than copying an example's partition.
 
@@ -34,7 +35,7 @@ Stage explicit paths or hunks for one logical change, not `git add .` or `git ad
 
 - every hunk belongs to the intended change, with no unrelated or sensitive material;
 - necessary imports, fixtures, generated inputs, and callers exist in HEAD plus the index, not only in later working-tree changes;
-- the message describes the staged change.
+- the message describes one outcome; if the staged diff reveals another independently useful outcome, unstage and repartition before committing.
 
 Prefer normal path staging or partial staging with `git add -p` / `git apply --cached`. Do not routinely reconstruct every file as per-commit `.txt` and formatted copies. If overlapping edits require an intermediate blob, limit it to the affected path, keep task-owned scratch files out of commits, and remove them after use. Direct index updates are a fallback, not the default for every file. Never clean up another running task's scratch files.
 
@@ -52,7 +53,7 @@ Commit, then inspect the resulting commit's subject, body, paths and diff summar
 
 ## When repartitioning existing commits
 
-Preserve a recovery ref and the original final tree for the authorized range. Reconstruct separately without overwriting unrelated work, inspect prerequisite order, and verify exact final-tree equality before moving the original branch. Do not alter product content or invent scaffolding to make a history-only split easier. Execute intermediate snapshots only under the conditions above.
+Preserve a recovery ref and the original final tree for the authorized range. Reconstruct separately without overwriting unrelated work, inspect prerequisite order, and verify exact final-tree equality before moving the original branch. Reassess the whole range; an earlier feature-sized commit is not a boundary to preserve. Do not alter product content or invent scaffolding to make a history-only split easier. Execute intermediate snapshots only under the conditions above.
 
 ## Rationale
 
