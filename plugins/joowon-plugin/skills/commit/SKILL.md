@@ -19,11 +19,11 @@ Read the actual diff and reuse those contents. Read callers or HEAD/index versio
 
 Choose boundaries before subjects or commit counts:
 
-- **Inventory responsibilities first.** When the diff spans multiple behaviors or owners, make a short boundary map before staging: the outcome, its implementation and direct tests/docs, prerequisites, and what reverting that group would remove. Keep it in task notes or progress output; do not create a report just for the map. Account for every changed hunk, not only filenames.
+- **Inventory responsibilities first.** Read the hunks and distinguish prerequisite adaptations from new behavior before grouping them. Map each outcome to its implementation, direct tests/docs, prerequisites, and revert scope in task notes or progress output. Account for shared-file hunks individually; directory or layer labels such as "backend" are not outcomes. Do not create a report just for the map.
 - **Split distinct changes.** Identify a useful result for each group. Different files, fields, tests, or feature names alone do not establish independence; a shared owner or incident alone does not establish cohesion.
 - **Keep one contract complete.** Keep its implementation, necessary caller adaptations, direct regression tests, required generated output, and essential usage documentation together. Independent existing-behavior tests, refactoring, or broader recovery coverage may stand alone. Revertability is a clue, not a reason to separate a fix from its test.
-- **Order prerequisites first.** An import establishes order, not automatic cohesion. Avoid a snapshot that requires later repairs. If a proposed split loses necessary context or breaks a contract, adjust the boundary or order.
-- **Stop at reviewable units.** Before accepting a proposed commit, ask whether a reviewer could accept one of its outcomes and reject another while the accepted outcome still makes sense. If so, split it. A commit message that needs independent storage, UI, runtime, workflow, or deployment clauses is a signal to revisit the boundary. Use size as a signal to examine scope, not a quota. Keep a larger commit only when the apparent parts are one inseparable contract, and name the concrete dependency.
+- **Order prerequisites first.** Imports, shared owners, and synchronous-to-asynchronous caller changes establish dependencies, not automatic cohesion. Keep a prerequisite and its necessary adaptations complete, then add behavior that consumes it. Before calling a split unsafe, identify the exact intermediate contract it would break and check whether ordering or partial staging resolves it. Editing the same file or avoiding staging effort is not evidence of inseparability.
+- **Stop at reviewable units.** Could a reviewer accept one outcome and reject another while the accepted outcome still makes sense? If so, split them. Independent storage, UI, runtime, workflow, or deployment clauses in a message are a signal to revisit the hunks. Size is a signal, not a quota; retain a larger group only when source inspection shows an inseparable contract, not merely a shared feature or passing final-tree tests.
 
 For example, one runtime contract correction across two callers may stay together, while separate persisted-state recovery coverage or a CI execution-policy change may stand alone. Judge the actual hunks rather than copying an example's partition.
 
@@ -31,7 +31,7 @@ Explain a non-obvious boundary briefly in progress output when useful. Do not cr
 
 ## Stage, check, commit
 
-Stage explicit paths or hunks for one logical change, not `git add .` or `git add -A`. Read the complete staged diff, run `git diff --cached --check`, and confirm:
+Stage explicit paths or hunks for one logical change, not `git add .` or `git add -A`. Read the complete staged diff, including intermediate content produced by partial staging; prior final-tree review, passing tests, and hooks do not establish its scope or completeness. Run `git diff --cached --check`, and confirm:
 
 - every hunk belongs to the intended change, with no unrelated or sensitive material;
 - necessary imports, fixtures, generated inputs, and callers exist in HEAD plus the index, not only in later working-tree changes;
