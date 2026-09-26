@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
@@ -20,14 +20,111 @@ function fixture(t) {
   writeFileSync(join(source,'nose-pre-push.mjs'),"import {readFileSync,writeFileSync} from 'node:fs';writeFileSync(process.env.NOSE_TEST_OUTPUT,JSON.stringify({args:process.argv.slice(2),input:readFileSync(0,'utf8')}));");
   return {temp,repo,source,hooks:join(repo,'.git/hooks')};
 }
-test('installation chains existing hook with identical args/stdin and survives removal of plugin source',t=>{
+test('one installation blocks pushes from existing and future worktrees with a relative hooksPath',t=>{
+  const f=fixture(t),remote=join(f.temp,'remote.git');
+  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+  git(f.repo,'config','user.name','Fixture');
+  git(f.repo,'config','user.email','fixture@example.invalid');
+  git(f.repo,'commit','--allow-empty','-qm','seed');
+  git(f.repo,'config','core.hooksPath','git-hooks');
+  git(f.temp,'init','--bare','-q',remote);
+  git(f.repo,'remote','add','origin',remote);
+  const existing=join(f.temp,'existing');
+  git(f.repo,'worktree','add','-qb','existing',existing);
+  const passing=readFileSync(join(f.source,'nose-pre-push.mjs'),'utf8');
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),'process.stderr.write("NOSE_DUPLICATION_BLOCKED: fixture\\n");process.exitCode=1;\n');
+  const installed=install(f.repo,f.source);
+  const future=join(f.temp,'future');
+  git(f.repo,'worktree','add','-qb','future',future);
+  for(const worktree of [existing,future]) {
+    const pushed=spawnSync('git',['push','origin','HEAD:refs/heads/proof'],{cwd:worktree,encoding:'utf8'});
+    assert.notEqual(pushed.status,0,'A worktree push must reach the blocking gate');
+    assert.match(pushed.stderr,/NOSE_DUPLICATION_BLOCKED: fixture/);
+    assert.equal(git(worktree,'config','--get','core.hooksPath'),'git-hooks');
+  }
+  assert.equal(spawnSync('git',['--git-dir',remote,'show-ref','--verify','--quiet','refs/heads/proof']).status,1);
+  writeFileSync(join(f.source,'nose-pre-push.mjs'),passing);
+  assert.equal(install(future,f.source).hook,installed.hook);
+  assert.equal(git(future,'config','--local','--get-all','hook.nose-review.event'),'pre-push');
+  const hooks=join(future,'git-hooks'),output=join(f.temp,'nose-input'),original=join(f.temp,'original-input');
+  mkdirSync(hooks);
+  writeFileSync(join(hooks,'pre-push'),'#!/bin/sh\ncat > "$NOSE_OLD_INPUT"\n',{mode:0o755});
+  const pushed=spawnSync('git',['push','origin','HEAD:refs/heads/proof'],{
+    cwd:future,encoding:'utf8',env:{...process.env,NOSE_TEST_OUTPUT:output,NOSE_OLD_INPUT:original},
+  });
+  assert.equal(pushed.status,0,pushed.stderr);
+  const received=JSON.parse(readFileSync(output,'utf8'));
+  assert.equal(received.input,readFileSync(original,'utf8'));
+  assert.match(received.input,/refs\/heads\/proof/);
+  assert.deepEqual(received.args,['origin',remote]);
+});
+test('registration retires only owned legacy wrappers and preserves each worktree original',t=>{
+  const f=fixture(t),linked=join(f.temp,'linked');
+  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+  git(f.repo,'config','user.name','Fixture');git(f.repo,'config','user.email','fixture@example.invalid');
+  git(f.repo,'commit','--allow-empty','-qm','seed');
+  git(f.repo,'config','core.hooksPath','git-hooks');
+  git(f.repo,'worktree','add','-qb','linked',linked);
+  const legacy='#!/bin/sh\n# nose-review managed pre-push v1\nexit 91\n';
+  const original='#!/bin/sh\nexit 0\n';
+  writeFileSync(join(f.hooks,'pre-push'),legacy,{mode:0o755});
+  for(const worktree of [f.repo,linked]) {
+    const hooks=join(worktree,'git-hooks');mkdirSync(hooks);
+    writeFileSync(join(hooks,'pre-push'),legacy,{mode:0o755});
+    writeFileSync(join(hooks,'pre-push.nose-review-original'),original,{mode:0o755});
+    writeFileSync(join(hooks,'pre-commit'),'#!/bin/sh\nexit 37\n',{mode:0o755});
+  }
+  install(linked,f.source);
+  assert.equal(existsSync(join(f.hooks,'pre-push')),false);
+  for(const worktree of [f.repo,linked]) {
+    assert.equal(readFileSync(join(worktree,'git-hooks/pre-push'),'utf8'),original);
+    assert.equal(existsSync(join(worktree,'git-hooks/pre-push.nose-review-original')),false);
+    assert.notEqual(spawnSync('git',['commit','--allow-empty','-qm','blocked'],{cwd:worktree}).status,0);
+  }
+});
+for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) test(`installation reports a disabled gate: ${key}`,t=>{
+  const f=fixture(t);
+  execFileSync('git',['config',key,'false'],{cwd:f.repo});
+  assert.throws(()=>install(f.repo,f.source),/disables the Nose gate/);
+  assert.equal(execFileSync('git',['config','--get',key],{cwd:f.repo,encoding:'utf8'}).trim(),'false');
+});
+test('installation detects a disabled gate in another worktree without overwriting its choice',t=>{
+  const f=fixture(t),linked=join(f.temp,'linked');
+  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+  git(f.repo,'config','user.name','Fixture');git(f.repo,'config','user.email','fixture@example.invalid');
+  git(f.repo,'commit','--allow-empty','-qm','seed');
+  git(f.repo,'config','extensions.worktreeConfig','true');
+  git(f.repo,'worktree','add','-qb','linked',linked);
+  git(linked,'config','--worktree','hook.nose-review.enabled','false');
+  assert.throws(()=>install(f.repo,f.source),/disables the Nose gate/);
+  assert.equal(git(linked,'config','--worktree','--get','hook.nose-review.enabled'),'false');
+});
+test('installation preserves an unrelated command occupying its registration name',t=>{
+  const f=fixture(t);
+  execFileSync('git',['config','hook.nose-review.command','unrelated-command'],{cwd:f.repo});
+  assert.throws(()=>install(f.repo,f.source),/belongs to another installation/);
+  assert.equal(execFileSync('git',['config','--get','hook.nose-review.command'],{cwd:f.repo,encoding:'utf8'}).trim(),'unrelated-command');
+});
+test('a stale worktree record does not block registration or remove its remaining directory',t=>{
+  const f=fixture(t),stale=join(f.temp,'stale');
+  const git=(...args)=>execFileSync('git',args,{cwd:f.repo,encoding:'utf8'}).trim();
+  git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  git('commit','--allow-empty','-qm','seed');
+  git('worktree','add','-qb','stale',stale);
+  rmSync(join(stale,'.git'));
+  assert.equal(install(f.repo,f.source).status,'installed');
+  assert.ok(existsSync(stale));
+  assert.match(git('worktree','list','--porcelain'),/prunable/);
+});
+test('native registration preserves existing hook args/stdin and survives removal of plugin source',t=>{
   const f=fixture(t);
   const old='#!/bin/sh\ncat > "$NOSE_OLD_INPUT"\nprintf "%s\\n" "$@" > "$NOSE_OLD_ARGS"\n';
   writeFileSync(join(f.hooks,'pre-push'),old,{mode:0o755});
   const first=install(f.repo,f.source);
   assert.equal(first.status,'installed');
-  const release=readdirSync(join(f.hooks,'.nose-review')).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
-  const dispatcher=readFileSync(join(f.hooks,'.nose-review',release,'dispatch.mjs'),'utf8');
+  const managed=join(dirname(first.hook),'.nose-review');
+  const release=readdirSync(managed).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
+  const dispatcher=readFileSync(join(managed,release,'dispatch.mjs'),'utf8');
   assert.ok(refTimeoutMs > 2 * scanTimeoutMs);
   assert.ok(dispatcher.includes(`const timeoutMs=refCount*${refTimeoutMs};`));
   assert.match(dispatcher,/timeout:timeoutMs/);
@@ -36,23 +133,26 @@ test('installation chains existing hook with identical args/stdin and survives r
   assert.equal(install(f.repo,f.source).status,'current');
   assert.equal(statSync(first.hook).mtimeMs,before.mtimeMs);
   assert.equal(statSync(first.hook).ino,before.ino);
-  assert.equal(readFileSync(first.previousHook,'utf8'),old);
+  assert.equal(readFileSync(join(f.hooks,'pre-push'),'utf8'),old);
   rmSync(f.source,{recursive:true});
   const output=join(f.temp,'out'),oldInput=join(f.temp,'stdin'),oldArgs=join(f.temp,'args');
   const input='refs/heads/main abc refs/heads/main def\n';
-  const result=spawnSync(first.hook,['origin','/tmp/remote space'],{cwd:f.repo,input,encoding:'utf8',env:{...process.env,NOSE_TEST_OUTPUT:output,NOSE_OLD_INPUT:oldInput,NOSE_OLD_ARGS:oldArgs}});
+  const inputPath=join(f.temp,'input');writeFileSync(inputPath,input);
+  const result=spawnSync('git',['hook','run',`--to-stdin=${inputPath}`,'pre-push','--','origin','/tmp/remote space'],{cwd:f.repo,encoding:'utf8',env:{...process.env,NOSE_TEST_OUTPUT:output,NOSE_OLD_INPUT:oldInput,NOSE_OLD_ARGS:oldArgs}});
   assert.equal(result.status,0,result.stderr);
   assert.deepEqual(JSON.parse(readFileSync(output,'utf8')),{args:['origin','/tmp/remote space'],input});
   assert.equal(readFileSync(oldInput,'utf8'),input);
   assert.equal(readFileSync(oldArgs,'utf8'),'origin\n/tmp/remote space\n');
 });
-test('existing pre-push rejection is preserved and Nose is not run',t=>{
+test('existing pre-push still rejects after the native Nose hook succeeds',t=>{
   const f=fixture(t),output=join(f.temp,'out');
-  writeFileSync(join(f.hooks,'pre-push'),'#!/bin/sh\nexit 23\n',{mode:0o755});
-  const result=install(f.repo,f.source);
-  const push=spawnSync(result.hook,[],{cwd:f.repo,input:'',env:{...process.env,NOSE_TEST_OUTPUT:output}});
-  assert.equal(push.status,23);
-  assert.equal(existsSync(output),false);
+  writeFileSync(join(f.hooks,'pre-push'),'#!/bin/sh\necho "original rejected" >&2\nexit 23\n',{mode:0o755});
+  install(f.repo,f.source);
+  const inputPath=join(f.temp,'input');writeFileSync(inputPath,'');
+  const push=spawnSync('git',['hook','run',`--to-stdin=${inputPath}`,'pre-push'],{cwd:f.repo,encoding:'utf8',env:{...process.env,NOSE_TEST_OUTPUT:output}});
+  assert.notEqual(push.status,0);
+  assert.match(push.stderr,/original rejected/);
+  assert.equal(existsSync(output),true);
 });
 test('reinstallation restores executable mode on an otherwise current hook',t=>{
   const f=fixture(t),first=install(f.repo,f.source);
@@ -62,7 +162,7 @@ test('reinstallation restores executable mode on an otherwise current hook',t=>{
 });
 for(const damage of ['', 'invalid JavaScript {']) test(`bootstrap rejects damaged dispatcher ${JSON.stringify(damage)}`,t=>{
   const f=fixture(t),first=install(f.repo,f.source);
-  const managed=join(f.hooks,'.nose-review');
+  const managed=join(dirname(first.hook),'.nose-review');
   const release=readdirSync(managed).find(name=>existsSync(join(managed,name,'dispatch.mjs')));
   writeFileSync(join(managed,release,'dispatch.mjs'),damage);
   const run=spawnSync(first.hook,[],{cwd:f.repo,input:'',encoding:'utf8'});
@@ -155,8 +255,9 @@ test('corrupted active payload is unavailable and is replaced on reinstall',t=>{
   const f=fixture(t),output=join(f.temp,'out');
   const first=install(f.repo,f.source);
   const firstContent=readFileSync(first.hook,'utf8');
-  const release=readdirSync(join(f.hooks,'.nose-review')).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
-  rmSync(join(f.hooks,'.nose-review',release,'nose-pre-push.mjs'));
+  const managed=join(dirname(first.hook),'.nose-review');
+  const release=readdirSync(managed).find(name=>!name.endsWith('.tmp') && name!=='install.lock');
+  rmSync(join(managed,release,'nose-pre-push.mjs'));
 
   const broken=spawnSync(first.hook,[],{cwd:f.repo,input:'',encoding:'utf8'});
   assert.equal(broken.status,2,broken.stderr);
@@ -187,9 +288,10 @@ test('repo-local hooksPath is honored, outside hooksPath is not modified',t=>{
   const f=fixture(t);
   execFileSync('git',['config','core.hooksPath','.githooks'],{cwd:f.repo});
   assert.equal(install(f.repo,f.source).status,'installed');
-  assert.ok(existsSync(join(f.repo,'.githooks/pre-push')));
+  assert.equal(execFileSync('git',['config','--get','core.hooksPath'],{cwd:f.repo,encoding:'utf8'}).trim(),'.githooks');
+  assert.equal(existsSync(join(f.repo,'.githooks/pre-push')),false);
   execFileSync('git',['config','core.hooksPath',join(f.temp,'shared-hooks')],{cwd:f.repo});
-  assert.equal(install(f.repo,f.source).status,'skipped');
+  assert.equal(install(f.repo,f.source).status,'current');
   assert.equal(existsSync(join(f.temp,'shared-hooks')),false);
 });
 test('non-Git project needs no hook and repeated install updates payload without losing original',t=>{
@@ -197,10 +299,10 @@ test('non-Git project needs no hook and repeated install updates payload without
   assert.equal(install(f.source,f.source).status,'skipped');
   writeFileSync(join(f.hooks,'pre-push'),'#!/bin/sh\nexit 0\n',{mode:0o755});
   const first=install(f.repo,f.source);
-  const original=readFileSync(first.previousHook,'utf8');
+  const original=readFileSync(join(f.hooks,'pre-push'),'utf8');
   writeFileSync(join(f.source,'review-runtime.mjs'),'// new version\n');
   assert.equal(install(f.repo,f.source).status,'installed');
-  assert.equal(readFileSync(first.previousHook,'utf8'),original);
+  assert.equal(readFileSync(join(f.hooks,'pre-push'),'utf8'),original);
 });
 
 test('installation preserves local exclusions and ignores all local review state',t=>{

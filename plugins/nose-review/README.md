@@ -5,8 +5,15 @@ Code duplication and secret checks at push time, with an on-demand `$nose-fix` s
 ## Automatic installation
 
 Install the plugin, trust its hook, and open a **new Codex session in the Git
-project**. The SessionStart hook installs or updates that project's pre-push
-dispatcher automatically. It does not run a Nose scan.
+project**. The SessionStart hook installs or updates a repository-local
+`hook.nose-review` pre-push registration. Its payload lives in the Git common
+directory, so existing and future linked worktrees share the same gate even
+when `core.hooksPath` is relative. It does not run a Nose scan.
+
+Use Git 2.54 or newer for both installation and pushes. The installer probes
+[configured-hook support](https://git-scm.com/docs/git-hook) and reports setup
+unavailable on unsupported Git; an older Git executable can ignore the native
+registration. An explicitly disabled or overridden gate is reported, not reset.
 
 Codex has no project-scoped post-install callback: merely downloading this plugin
 does not discover and edit all repositories on your computer. Registration occurs
@@ -37,10 +44,10 @@ to disk and verification hashes files in chunks. Archives remain bounded at 2 Gi
 and 100,000 entries. Actual Nose analyses use the shared scan budget described
 below; exceeding it remains a check failure.
 
-The dispatcher first runs any executable pre-existing pre-push with its original
-arguments and standard input. Its nonzero exit still rejects the push. If it
-passes, Nose inspects each pushed local commit in a temporary snapshot, without
-checking out branches or changing the index or working tree.
+Git runs configured hooks before the hook-directory pre-push. Both receive the
+original arguments and complete ref input, and either can reject the push.
+Nose inspects each pushed local commit in a temporary snapshot, without checking
+out branches or changing the index or working tree.
 
 Snapshots use one private, locked path per project, emptied before each verified
 extraction and removed afterward. Keeping the pathname stable lets Nose reuse its
@@ -146,25 +153,25 @@ check independent of those edits. Reports can be replaced by another scan.
 
 ## Existing hooks and uninstall
 
-The original hook is retained beside pre-push as `pre-push.nose-review-original`.
-Other hooks are untouched. Project-local `core.hooksPath` is honored.
-External/shared hook directories and symlinked pre-push files are preserved and
-produce a setup notice instead of being overwritten.
+Existing hooks and `core.hooksPath` are untouched. Git continues resolving them
+for each worktree, including external hook directories and symlinked hooks.
+When upgrading an older Nose installation, owned wrappers in the repository's
+existing worktrees are retired and their `pre-push.nose-review-original` backups
+are restored. Unmanaged hooks are not replaced.
 
-The dispatcher uses a versioned payload copied under the hooks directory's
+The dispatcher uses a versioned payload copied under the shared Nose directory's
 `.nose-review/` folder. It keeps working outside Codex and when a Codex plugin
 cache is replaced. Node.js and Nose must remain available.
 An identical payload leaves the hook untouched; changed payloads update it
-without replacing the saved original hook.
+without changing existing project hooks.
 Reinstallation restores a missing executable bit. The shell entrypoint embeds
 expected payload hashes and checks them before loading the dispatcher; missing,
 empty, or changed payload files block with `NOSE_CHECK_UNAVAILABLE`.
 
-Uninstalling the Codex plugin does not remove repository-local Git hooks.
-To undo a registration, first inspect the installed hook path printed at setup.
-Restore its sibling `pre-push.nose-review-original` if present; otherwise remove
-only the generated pre-push. The payload directory can be retained or removed
-after no dispatcher uses it.
+Uninstalling the Codex plugin does not remove repository-local Git registration.
+To undo it, run `git config --local --remove-section hook.nose-review` in the
+repository. The generated hook and payload directory printed at setup may then
+be removed after no registration uses them. Existing project hooks remain active.
 
 ## Manual work and fixes
 

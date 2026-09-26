@@ -51,18 +51,64 @@ function ignoreLocalReports(root) {
   const missing=['/.nose-review/'].filter(line=>!old.split(/\r?\n/).includes(line));
   if(missing.length) appendFileSync(path,(old && !old.endsWith('\n')?'\n':'')+missing.join('\n')+'\n',{mode:0o600});
 }
+function configuredHooksSupported(root) {
+  const event='nose-review-capability-check',name='nose-review-capability';
+  const result=spawnSync('git',['-c',`hook.${name}.event=${event}`,'-c',`hook.${name}.command=true`,
+    'hook','list','--allow-unknown-hook-name','-z',event],{cwd:root,encoding:'utf8',timeout:10000});
+  return result.status===0 && result.stdout.split('\0').includes(name);
+}
+function legacyHooks(worktrees,common) {
+  const directories=new Set([join(common,'hooks')]);
+  for(const worktree of worktrees) {
+    const hooks=git(worktree,['rev-parse','--path-format=absolute','--git-path','hooks']);
+    const local=relative(realpathSync(worktree),existsSync(hooks)?realpathSync(hooks):hooks);
+    if(local && local!=='..' && !local.startsWith('..'+sep)) directories.add(hooks);
+  }
+  return [...directories].flatMap(directory=>{
+    const hook=join(directory,'pre-push'),backup=hook+'.nose-review-original';
+    const stat=lstatSync(hook,{throwIfNoEntry:false});
+    if(!stat?.isFile() || stat.isSymbolicLink() || !readFileSync(hook,'utf8').startsWith('#!/bin/sh\n'+marker+'\n')) return [];
+    regular(backup);
+    return [{hook,backup}];
+  });
+}
+function registerHook(root,hook,legacy,worktrees) {
+  const command=quote(hook);
+  const existing=spawnSync('git',['config','--local','--get','hook.nose-review.command'],{cwd:root,encoding:'utf8'});
+  if(existing.status===0 && existing.stdout.trim()!==command) throw new Error('hook.nose-review.command belongs to another installation; inspect it before replacing it');
+  for(const [key,value] of [['hook.nose-review.command',command],['hook.nose-review.event','pre-push']]) {
+    const current=spawnSync('git',['config','--local','--get-all',key],{cwd:root,encoding:'utf8'});
+    if(current.status!==0 || current.stdout.trim()!==value) git(root,['config','--local','--replace-all',key,value]);
+  }
+  for(const worktree of worktrees) {
+    for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) {
+      const enabled=spawnSync('git',['config','--type=bool','--get',key],{cwd:worktree,encoding:'utf8',timeout:10000});
+      if(enabled.status!==0 && enabled.status!==1) throw new Error(`Cannot read ${key} in ${worktree}`);
+      if(enabled.status===0 && enabled.stdout.trim()==='false') throw new Error(`${key}=false disables the Nose gate in ${worktree}`);
+    }
+    const effective=git(worktree,['config','--get','hook.nose-review.command']);
+    const active=git(worktree,['hook','list','-z','pre-push']).split('\0');
+    if(effective!==command || !active.includes('nose-review')) throw new Error(`Effective Git configuration overrides the Nose registration in ${worktree}`);
+  }
+  for(const {hook:old,backup} of legacy) {
+    if(existsSync(backup)) renameSync(backup,old);
+    else rmSync(old);
+  }
+}
 export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
   let root;
   try { root=git(cwd,['rev-parse','--show-toplevel']); }
   catch { return {status:'skipped',reason:'No Git worktree; use nose-fix for manual checks'}; }
-  const custom=spawnSync('git',['config','--get','core.hooksPath'],{cwd:root,encoding:'utf8'});
-  const hooks=custom.status===0 ? resolve(root,custom.stdout.trim()) : resolve(root,git(root,['rev-parse','--path-format=absolute','--git-path','hooks']));
-  if(custom.status===0) {
-    const path=relative(realpathSync(root),existsSync(hooks)?realpathSync(hooks):hooks);
-    if(path==='..' || path.startsWith('..'+sep) || resolve(hooks)===realpathSync(root)) {
-      return {status:'skipped',reason:'Shared/external core.hooksPath is preserved; configure a project-local hooks directory to opt in'};
-    }
-  }
+  if(!configuredHooksSupported(root)) throw new Error('Git with configured hooks is required (Git 2.54 or newer); use the same supported Git for installation and pushes');
+  const common=git(root,['rev-parse','--path-format=absolute','--git-common-dir']);
+  const hooks=join(common,'nose-review');
+  if(lstatSync(hooks,{throwIfNoEntry:false})?.isSymbolicLink()) throw new Error('Refusing symlinked Nose hook directory');
+  const worktrees=git(root,['worktree','list','--porcelain','-z']).split('\0\0')
+    .map(record=>record.split('\0'))
+    .filter(fields=>!fields.some(field=>field==='bare' || field.startsWith('prunable')))
+    .flatMap(fields=>fields.filter(field=>field.startsWith('worktree ')).map(field=>field.slice(9)))
+    .filter(path=>existsSync(path));
+  const legacy=legacyHooks(worktrees,common);
   mkdirSync(hooks,{recursive:true});
   const managed=join(hooks,'.nose-review');
   if(lstatSync(managed,{throwIfNoEntry:false})?.isSymbolicLink()) throw new Error('Refusing symlinked payload directory');
@@ -71,21 +117,15 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
   try { mkdirSync(lock); } catch { return {status:'skipped',reason:'Another hook installation is in progress'}; }
   try {
     const hook=join(hooks,'pre-push');
-    const backup=join(hooks,'pre-push.nose-review-original');
-    regular(hook); regular(backup);
+    regular(hook);
     const existing=existsSync(hook)?readFileSync(hook,'utf8'):null;
     const ours=existing?.startsWith('#!/bin/sh\n'+marker+'\n');
-    if(existing!==null && !ours && existsSync(backup)) throw new Error('Original hook backup already exists; resolve manually');
+    if(existing!==null && !ours) throw new Error('Nose hook path is occupied by an unmanaged file');
     const data=sources.map(name=>[name,readFileSync(join(source,name),'utf8')]);
-    const dispatcher=`import {readFileSync,existsSync,statSync} from 'node:fs';
-import {spawn,spawnSync} from 'node:child_process';
+    const dispatcher=`import {readFileSync} from 'node:fs';
+import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const input=readFileSync(0);
-const original=${JSON.stringify(backup)};
-if(existsSync(original) && (statSync(original).mode & 0o111)) {
- const result=spawnSync(original,process.argv.slice(2),{input,stdio:['pipe','inherit','inherit']});
- if(result.error || result.status!==0) process.exit(result.status || 1);
-}
 const refCount=Math.max(1,input.toString('utf8').trim().split(/\\n/).filter(line=>line.trim()).length);
 const timeoutMs=refCount*${refTimeoutMs};
 const child=spawn(process.execPath,[fileURLToPath(new URL('./nose-pre-push.mjs',import.meta.url)),...process.argv.slice(2)],{stdio:['pipe','inherit','pipe'],timeout:timeoutMs});
@@ -123,6 +163,7 @@ if(check.error || check.signal || !expected) {
       const active=readdirSync(managed).map(name=>join(managed,name))
         .find(release=>existing===hookContent(release,data) && payloadMatches(release,data));
       if(active) {
+        registerHook(root,hook,legacy,worktrees);
         if(!(lstatSync(hook).mode & 0o100)){chmodSync(hook,0o755);return {status:'installed',hook};}
         return {status:'current',hook};
       }
@@ -145,13 +186,9 @@ if(check.error || check.signal || !expected) {
     const temporary=join(managed,'pre-push.tmp');
     writeFileSync(temporary,content,{mode:0o755});
     chmodSync(temporary,0o755);
-    if(existing!==null && !ours) renameSync(hook,backup);
-    try { renameSync(temporary,hook); }
-    catch(error) {
-      if(!existsSync(hook) && existsSync(backup)) renameSync(backup,hook);
-      throw error;
-    }
-    return {status:'installed',hook,previousHook:existsSync(backup)?backup:null};
+    renameSync(temporary,hook);
+    registerHook(root,hook,legacy,worktrees);
+    return {status:'installed',hook};
   } finally { rmSync(lock,{recursive:true}); }
 }
 
