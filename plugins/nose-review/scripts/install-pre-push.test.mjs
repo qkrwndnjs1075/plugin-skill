@@ -20,12 +20,16 @@ function fixture(t) {
   writeFileSync(join(source,'nose-pre-push.mjs'),"import {readFileSync,writeFileSync} from 'node:fs';writeFileSync(process.env.NOSE_TEST_OUTPUT,JSON.stringify({args:process.argv.slice(2),input:readFileSync(0,'utf8')}));");
   return {temp,repo,source,hooks:join(repo,'.git/hooks')};
 }
-test('one installation blocks pushes from existing and future worktrees with a relative hooksPath',t=>{
-  const f=fixture(t),remote=join(f.temp,'remote.git');
-  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
+function committedFixture(t) {
+  const f=fixture(t);
   git(f.repo,'config','user.name','Fixture');
   git(f.repo,'config','user.email','fixture@example.invalid');
   git(f.repo,'commit','--allow-empty','-qm','seed');
+  return f;
+}
+test('one installation blocks pushes from existing and future worktrees with a relative hooksPath',t=>{
+  const f=committedFixture(t),remote=join(f.temp,'remote.git');
   git(f.repo,'config','core.hooksPath','git-hooks');
   git(f.temp,'init','--bare','-q',remote);
   git(f.repo,'remote','add','origin',remote);
@@ -59,10 +63,7 @@ test('one installation blocks pushes from existing and future worktrees with a r
   assert.deepEqual(received.args,['origin',remote]);
 });
 test('registration retires only owned legacy wrappers and preserves each worktree original',t=>{
-  const f=fixture(t),linked=join(f.temp,'linked');
-  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
-  git(f.repo,'config','user.name','Fixture');git(f.repo,'config','user.email','fixture@example.invalid');
-  git(f.repo,'commit','--allow-empty','-qm','seed');
+  const f=committedFixture(t),linked=join(f.temp,'linked');
   git(f.repo,'config','core.hooksPath','git-hooks');
   git(f.repo,'worktree','add','-qb','linked',linked);
   const legacy='#!/bin/sh\n# nose-review managed pre-push v1\nexit 91\n';
@@ -89,10 +90,7 @@ for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) test(`ins
   assert.equal(execFileSync('git',['config','--get',key],{cwd:f.repo,encoding:'utf8'}).trim(),'false');
 });
 test('installation detects a disabled gate in another worktree without overwriting its choice',t=>{
-  const f=fixture(t),linked=join(f.temp,'linked');
-  const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8'}).trim();
-  git(f.repo,'config','user.name','Fixture');git(f.repo,'config','user.email','fixture@example.invalid');
-  git(f.repo,'commit','--allow-empty','-qm','seed');
+  const f=committedFixture(t),linked=join(f.temp,'linked');
   git(f.repo,'config','extensions.worktreeConfig','true');
   git(f.repo,'worktree','add','-qb','linked',linked);
   git(linked,'config','--worktree','hook.nose-review.enabled','false');
@@ -106,15 +104,12 @@ test('installation preserves an unrelated command occupying its registration nam
   assert.equal(execFileSync('git',['config','--get','hook.nose-review.command'],{cwd:f.repo,encoding:'utf8'}).trim(),'unrelated-command');
 });
 test('a stale worktree record does not block registration or remove its remaining directory',t=>{
-  const f=fixture(t),stale=join(f.temp,'stale');
-  const git=(...args)=>execFileSync('git',args,{cwd:f.repo,encoding:'utf8'}).trim();
-  git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
-  git('commit','--allow-empty','-qm','seed');
-  git('worktree','add','-qb','stale',stale);
+  const f=committedFixture(t),stale=join(f.temp,'stale');
+  git(f.repo,'worktree','add','-qb','stale',stale);
   rmSync(join(stale,'.git'));
   assert.equal(install(f.repo,f.source).status,'installed');
   assert.ok(existsSync(stale));
-  assert.match(git('worktree','list','--porcelain'),/prunable/);
+  assert.match(git(f.repo,'worktree','list','--porcelain'),/prunable/);
 });
 test('native registration preserves existing hook args/stdin and survives removal of plugin source',t=>{
   const f=fixture(t);
