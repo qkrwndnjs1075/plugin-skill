@@ -5,9 +5,9 @@ description: Create small, complete local commits from requested changes. Use wh
 
 # Commit
 
-Read the diff, group logical changes, inspect each staged diff, and commit. Keep routine boundary decisions within this flow. This skill does not require a separate reviewer, approval verdicts, re-review, or a per-commit evidence ledger. Follow any additional checks explicitly required by the user or repository.
+Work in order: propose boundaries from the diff, compare each staged change with its proposed outcome, then commit. Keep the proposal and comparison in normal progress output; a single change needs only a sentence. No separate report, reviewer, approval checkpoint, or per-commit QA cycle is required by this skill. Follow additional user or repository checks.
 
-## Scope and source reads
+## 1. Read the authorized changes
 
 Inspect repository instructions, branch/upstream, staged and unstaged changes, relevant untracked files, and recent commit subjects. Preserve unrelated edits and their staged state. Loading the skill alone does not authorize Git mutations. Honor preview-only requests.
 
@@ -15,31 +15,34 @@ A commit request authorizes local commits. Repartitioning existing commits requi
 
 Read the actual diff and reuse those contents. Read callers or HEAD/index versions only when needed to understand a change or resolve a specific intermediate dependency. Batch independent reads; do not repeatedly dump every file's base and final contents after already understanding the diff. Refresh affected reads when the source changes.
 
-## Choose boundaries
+## 2. Propose boundaries before staging
 
-Choose boundaries before subjects or commit counts:
+Before staging, state each proposed outcome with its implementation, direct tests/docs, and prerequisites. Use paths or symbols to make the grouping checkable; choose subjects and commit count afterward. Apply these criteria to the actual hunks:
 
-- **Inventory responsibilities first.** Read the hunks and distinguish prerequisite adaptations from new behavior before grouping them. Map each outcome to its implementation, direct tests/docs, prerequisites, and revert scope in task notes or progress output. Account for shared-file hunks individually; directory or layer labels such as "backend" are not outcomes. Do not create a report just for the map.
+- **Inventory responsibilities first.** Distinguish prerequisite adaptations from new behavior. Account for shared-file hunks individually; directory or layer labels such as "backend" are not outcomes.
 - **Split distinct changes.** Identify a useful result for each group. Different files, fields, tests, or feature names alone do not establish independence; a shared owner or incident alone does not establish cohesion.
 - **Keep one contract complete.** Keep its implementation, necessary caller adaptations, direct regression tests, required generated output, and essential usage documentation together. Independent existing-behavior tests, refactoring, or broader recovery coverage may stand alone. Revertability is a clue, not a reason to separate a fix from its test.
-- **Order prerequisites first.** Imports, shared owners, and synchronous-to-asynchronous caller changes establish dependencies, not automatic cohesion. Keep a prerequisite and its necessary adaptations complete, then add behavior that consumes it. Before calling a split unsafe, identify the exact intermediate contract it would break and check whether ordering or partial staging resolves it. Editing the same file or avoiding staging effort is not evidence of inseparability.
+- **Order prerequisites first.** Keep a prerequisite and its necessary adaptations complete, then add its consumers. When retaining multiple behaviors as one contract, name the producer and caller or invariant that separation would break, and check whether ordering or partial staging resolves that dependency. Shared files, owners, and feature names alone do not establish inseparability.
 - **Stop at reviewable units.** Could a reviewer accept one outcome and reject another while the accepted outcome still makes sense? If so, split them. Independent storage, UI, runtime, workflow, or deployment clauses in a message are a signal to revisit the hunks. Size is a signal, not a quota; retain a larger group only when source inspection shows an inseparable contract, not merely a shared feature or passing final-tree tests.
 
-For example, one runtime contract correction across two callers may stay together, while separate persisted-state recovery coverage or a CI execution-policy change may stand alone. Judge the actual hunks rather than copying an example's partition.
+Proceed without routine approval. Clarify only genuinely ambiguous intent or scope. If later inspection changes a boundary, update the proposal and its source-based reason before committing.
 
-Explain a non-obvious boundary briefly in progress output when useful. Do not create an approval checkpoint for routine grouping. If intent or scope is genuinely ambiguous, clarify that specific issue.
+## 3. Compare the staged change with the proposal
 
-## Stage, check, commit
+Stage explicit paths or hunks for one proposed outcome, not `git add .` or `git add -A`. Read the complete staged diff, including partial-staging intermediate content, and run `git diff --cached --check`. Compare HEAD plus the index with the proposal:
 
-Stage explicit paths or hunks for one logical change, not `git add .` or `git add -A`. Read the complete staged diff, including intermediate content produced by partial staging; prior final-tree review, passing tests, and hooks do not establish its scope or completeness. Run `git diff --cached --check`, and confirm:
-
-- every hunk belongs to the intended change, with no unrelated or sensitive material;
+- every hunk belongs to the proposed outcome, with no unrelated or sensitive material;
 - necessary imports, fixtures, generated inputs, and callers exist in HEAD plus the index, not only in later working-tree changes;
-- the message describes one outcome; if the staged diff reveals another independently useful outcome, unstage and repartition before committing.
+- direct tests and essential docs accompany their behavior; instructions must not describe a button, API, or setup flow introduced only by a later commit;
+- any newly discovered independent outcome returns to step 2 instead of being absorbed into a broader subject.
+
+Before committing, briefly state whether this comparison supports the boundary and identify any unresolved dependency. Resolve an actual mismatch by adjusting the staged hunks or proposal, then inspect the changed staged diff. Final-tree tests and hooks do not substitute for this comparison.
 
 Prefer normal path staging or partial staging with `git add -p` / `git apply --cached`. Do not routinely reconstruct every file as per-commit `.txt` and formatted copies. If overlapping edits require an intermediate blob, limit it to the affected path, keep task-owned scratch files out of commits, and remove them after use. Direct index updates are a fallback, not the default for every file. Never clean up another running task's scratch files.
 
 If unrelated staged edits would be included, preserve the user's index and isolate the requested commit, for example with a separate index. Do not reset, clear the index, or stash unrelated work as a shortcut. If the staged contents change after inspection, inspect the affected diff again before committing.
+
+## 4. Verify proportionally, commit, and read back
 
 Reuse verification that still covers the same content, dependencies, configuration, and scope. A new commit ID or partition alone does not require another QA cycle. Run repository-required checks and hooks. Never bypass a failed hook or modify unrelated code merely to finish committing.
 
@@ -50,6 +53,8 @@ Write messages in the repository's language and style. Every commit must have a 
 Scale the explanation to the change instead of filling a fixed template. Include relevant tradeoffs and behavior that must remain intact. When reporting verification, explain what the check established and any important limit; a test count alone does not explain the evidence. If an earlier test missed the bug, explain the mismatch between its setup and real behavior. Do not invent causes, alternatives, checks or results, or turn the body into a session transcript.
 
 Commit, then inspect the resulting commit's subject, body, paths and diff summary against the staged change. Inspect unexpected differences before continuing. At the end, report commit hashes and purposes, applicable checks and limits, and remaining work. Continue to a push or PR only when separately authorized.
+
+Use the same criteria when evaluating the commits afterward. A large diff or an unexecuted intermediate snapshot alone is not a defect. Identify the independent outcome, broken dependency, or misplaced hunk that supports a proposed correction; label an untested possibility as uncertainty.
 
 ## When repartitioning existing commits
 
