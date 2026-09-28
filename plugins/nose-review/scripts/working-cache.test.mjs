@@ -1,18 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, symlinkSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {mkdirSync, writeFileSync, rmSync, symlinkSync} from 'node:fs';
 import {join} from 'node:path';
-import {execFileSync, spawnSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {scan, stateRoot, cacheStateRoot} from './review-runtime.mjs';
+import {gitFixture, countRecordedCalls} from './test-helpers.mjs';
 
 function fixture(t) {
-  const directory=realpathSync(mkdtempSync(join(tmpdir(),'nose-working-cache-')));
-  t.after(()=>rmSync(directory,{recursive:true,force:true}));
-  const root=join(directory,'repo'),bin=join(directory,'bin'),calls=join(directory,'calls');
-  mkdirSync(root);mkdirSync(bin);
-  const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
-  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
+  const {root,directory,git}=gitFixture(t,'nose-working-cache-',{subdirectory:'repo'});
+  const bin=join(directory,'bin'),calls=join(directory,'calls');
+  mkdirSync(bin);
   writeFileSync(join(root,'a.js'),'export const a = 1;\n');
   git('add','.');git('commit','-qm','fixture');
   writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
@@ -31,7 +28,7 @@ function fixture(t) {
   const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   Object.assign(process.env,{PATH:bin+':'+process.env.PATH,NOSE_REVIEW_STATE_ROOT:join(directory,'state')});
   t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
-  const count=()=>readFileSync(calls,'utf8').trim().split('\n').length;
+  const count=countRecordedCalls.bind(null,calls);
   return {root,directory,git,count};
 }
 

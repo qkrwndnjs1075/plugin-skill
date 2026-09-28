@@ -5,6 +5,7 @@ import { tmpdir, homedir, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { scan, projectRoot, snapshot } from './review-runtime.mjs';
+import { countRecordedCalls } from './test-helpers.mjs';
 
 test('plain folders exclude dependencies, build output and symlinks and enforce size limits', t=>{
   const root=mkdtempSync(join(tmpdir(),'nose-plain-'));
@@ -149,7 +150,7 @@ test('verified content results reuse across sessions but invalidate tool, enviro
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state'),XDG_CONFIG_HOME:join(fixture,'config')});
   t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const run=()=>scan(root,['a.js'],root,'a'.repeat(40));
-  const count=()=>readFileSync(calls,'utf8').trim().split('\n').length;
+  const count=countRecordedCalls.bind(null,calls);
   const first=run();assert.deepEqual(run(),first);assert.equal(count(),1);
   process.env.CODEX_THREAD_ID='another-thread';process.env.TERM_SESSION_ID='another-terminal';
   assert.deepEqual(run(),first);assert.equal(count(),1);
