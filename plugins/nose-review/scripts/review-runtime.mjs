@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, extname, dirname, parse, delimiter, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir, homedir, availableParallelism } from 'node:os';
@@ -88,6 +88,58 @@ export function stateRoot(root) {
   if (lstatSync(directory).isSymbolicLink()) throw new Error('Review state directory must not be a symlink');
   return directory;
 }
+function workingIdentity(root) {
+  if (!isGit(root)) return null;
+  const files = [...new Set(git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean))].sort();
+  const inputs = [];
+  const controls = new Set();
+  for (const file of files) {
+    if (/^\.nose-review\/(?:report\.json|baseline\.json|failures\/.*\.json)$/.test(file)) continue;
+    const path = join(root, file);
+    const stat = lstatSync(path, {throwIfNoEntry:false});
+    if (stat?.isSymbolicLink()) {
+      try { inputs.push([file, linkedInput(path)]); }
+      catch { return null; }
+    } else {
+      if (stat && !stat.isFile()) return null;
+      inputs.push([file, stat ? hash(readFileSync(path)) : null]);
+    }
+    for (let directory=dirname(path);;directory=dirname(directory)) {
+      for (const name of ['.gitignore', '.ignore', '.rgignore', 'nose.ignore.json']) controls.add(join(directory,name));
+      if (directory===root) break;
+    }
+  }
+  for (let directory=root;;directory=dirname(directory)) {
+    for (const name of ['.gitignore', '.ignore', '.rgignore', 'nose.ignore.json']) controls.add(join(directory,name));
+    if (dirname(directory)===directory) break;
+  }
+  const localExclude=git(root,['rev-parse','--path-format=absolute','--git-path','info/exclude']).trim();
+  const controlHashes=[...controls].sort().flatMap(path=>{
+    const stat=lstatSync(path,{throwIfNoEntry:false});
+    if (stat && !stat.isFile()) throw new Error('Ignore controls must be regular files');
+    if (!stat && !path.startsWith(root+'/')) return [];
+    return [[path.startsWith(root+'/') ? path.slice(root.length+1) : path,stat ? hash(readFileSync(path)) : null]];
+  });
+  const excludeStat=lstatSync(localExclude,{throwIfNoEntry:false});
+  if (excludeStat && !excludeStat.isFile()) throw new Error('Ignore controls must be regular files');
+  controlHashes.push(['git:info/exclude',excludeStat ? hash(readFileSync(localExclude)) : null]);
+  return hash(JSON.stringify({kind:'working-folder',inputs,controls:controlHashes}));
+}
+
+function linkedInput(path, ancestors = new Set(), budget = {remaining:20000}) {
+  if (--budget.remaining < 0 || ancestors.size > 64) throw new Error('Linked input exceeds identity limits');
+  const stat=lstatSync(path,{throwIfNoEntry:false});
+  if (!stat) return null;
+  if (ancestors.has(path)) throw new Error('Cyclic linked input');
+  const next=new Set([...ancestors,path]);
+  if (stat.isSymbolicLink()) {
+    const target=readlinkSync(path);
+    return {link:target,target:linkedInput(resolve(dirname(path),target),next,budget)};
+  }
+  if (stat.isFile()) return hash(readFileSync(path));
+  if (stat.isDirectory()) return readdirSync(path).sort().map(name=>[name,linkedInput(join(path,name),next,budget)]);
+  throw new Error('Unsupported linked input');
+}
 export function withRegistry(root, operation) {
   const directory = stateRoot(root);
   const lock = join(directory,'lock');
@@ -160,7 +212,8 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
   const started = Date.now();
   const version = spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
-  const cache = join(stateRoot(realpathSync(cacheOwner)), 'analysis-cache');
+  const cacheDirectory = stateRoot(realpathSync(cacheOwner));
+  const cache = join(cacheDirectory, 'analysis-cache');
   mkdirSync(cache,{recursive:true,mode:0o700});
   if (lstatSync(cache).isSymbolicLink()) throw new Error('Analysis cache must not be a symlink');
   const temporary = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
@@ -169,15 +222,17 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
     const args=['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions];
     const cacheEvent=({operation,outcome,reason})=>process.stderr.write(`[nose result-cache] ${operation} ${outcome}: ${reason}\n`);
     const identitySkipped=reason=>cacheEvent({operation:'identity',outcome:'skipped',reason});
-    const identity=verifiedFiles === undefined ? (identitySkipped('working-folder-scan'),null)
-      : resultIdentity(root,args,version.stdout.trim(),inputIdentity,env,identitySkipped);
-    const resultCache={directory:stateRoot(realpathSync(cacheOwner)),identity,onEvent:cacheEvent};
+    const contentIdentity=()=>verifiedFiles === undefined ? workingIdentity(root) : inputIdentity;
+    const initialIdentity=contentIdentity();
+    const identity=resultIdentity(root,args,version.stdout.trim(),initialIdentity,env,identitySkipped);
+    const resultCache={directory:cacheDirectory,identity,onEvent:cacheEvent};
     const cached=identity ? readScanResult(resultCache) : null;
     if (cached && cached.noseVersion===version.stdout.trim() && JSON.stringify(cached.files)===JSON.stringify(before)) {
       const memberHashesForFamily=createMemberHasher(root);
       const verified=cached.families.every(family=>hash(JSON.stringify(memberHashesForFamily(family)))===family.fingerprint);
-      if (verified && JSON.stringify(before)===JSON.stringify(snapshot(root,verifiedFiles))) {
-        process.stderr.write(`[nose scan] verified result cache hit for ${inputIdentity}; ${cached.families.length} families\n`);
+      if (verified && JSON.stringify(before)===JSON.stringify(snapshot(root,verifiedFiles))
+        && JSON.stringify(identity)===JSON.stringify(resultIdentity(root,args,version.stdout.trim(),contentIdentity(),env,identitySkipped))) {
+        process.stderr.write(`[nose scan] verified result cache hit for ${initialIdentity}; ${cached.families.length} families\n`);
         return cached;
       }
       cacheEvent({operation:'verify',outcome:'miss',reason:verified?'source-changed-during-read':'membership-mismatch'});
@@ -220,9 +275,9 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
     process.stderr.write(`[nose scan] completed in ${Math.ceil((Date.now() - started) / 1000)}s; ${families.length} families\n`);
     const verifiedResult={noseVersion:version.stdout.trim(),families,files:before};
     if (identity) {
-      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),inputIdentity,env,identitySkipped);
+      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),contentIdentity(),env,identitySkipped);
       if (JSON.stringify(identity)===JSON.stringify(afterIdentity)) writeScanResult({...resultCache,result:verifiedResult});
-      else cacheEvent({operation:'write',outcome:'skipped',reason:'identity-changed-during-scan'});
+      else throw new Error('Scan inputs changed during scan; review deferred');
     }
     return verifiedResult;
   } finally { rmSync(temporary,{recursive:true,force:true}); }
