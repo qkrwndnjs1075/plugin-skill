@@ -248,6 +248,11 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   Gitless working scans. The existing Nose-owned
   analysis cache remains available on these paths. Cold full analyses still incur
   the detector's full cost.
+- Nose Fix batches source edits before one refresh. Multiple intentional decisions
+  can be recorded with `review-policy.mjs accept-batch <repo> <decisions.json>`,
+  where the file is an array of `{fingerprint, reason}` entries. Every reason must
+  be source-backed. All entries are validated before one atomic baseline write;
+  one invalid entry rejects the entire batch. Recording decisions alone needs no rescan.
 - Result-cache decisions are logged on stderr as `[nose result-cache]` with the
   operation, outcome and reason: for example `read miss: not-found`,
   `write skipped: missing-source-member`, `write skipped: entry-too-large`,

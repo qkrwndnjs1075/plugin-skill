@@ -95,8 +95,24 @@ findings. No new remote, branch, or unrelated commit is authorized by recovery.
 
 ## Record intentional decisions and verify
 
-Refresh after edits before recording exceptions, since spans and fingerprints may
-have changed. For each confidently intentional current family, execute:
+Resolve candidates in a bounded batch: read and judge the scoped families first,
+apply the batch's source fixes, then refresh once after those edits. Do not scan
+after each family. Reuse the successful scan while source and scan configuration
+remain unchanged. Record intentional decisions from the refreshed report because
+spans and fingerprints may have changed.
+
+For multiple confidently intentional current families, write a JSON array of
+`{"fingerprint":"...","reason":"Concrete source-backed reason"}` entries to a
+temporary decisions file under `.nose-review/`, then execute:
+
+```sh
+node "$NOSE_PLUGIN_ROOT/scripts/review-policy.mjs" accept-batch \
+  "$NOSE_PROJECT_ROOT" /absolute/path/to/decisions.json
+```
+
+Every entry needs its own source-backed reason; this is not blanket acceptance.
+The command validates all entries before atomically saving any decisions. Remove
+the temporary decisions file afterward. For one family, the existing command works:
 
 ```sh
 node "$NOSE_PLUGIN_ROOT/scripts/review-policy.mjs" accept \

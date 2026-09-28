@@ -280,6 +280,29 @@ function accept(root, fingerprint, reason = "Separate owners") {
   return spawnSync(process.execPath, [new URL("./review-policy.mjs", import.meta.url).pathname, "accept", root, fingerprint, reason], { encoding: "utf8" });
 }
 
+for (const invalid of [false, true]) test(`batch acceptance ${invalid ? 'rejects all entries when one source is stale' : 'records all independently justified entries'}`,t=>{
+  const {root,review,report,fingerprint}=reviewFixture(t);
+  for (const file of ['c.js','d.js']) writeFileSync(join(root,file),'const other = 9;\nreturn other;\n');
+  const family={locations:['c.js','d.js'].map(file=>({file,start:1,end:2}))};
+  const second=fingerprintFamily(family,root);
+  report.candidates.push({...family,fingerprint:second});
+  writeFileSync(join(review,'report.json'),JSON.stringify(report));
+  const decisions=join(review,'decisions.json');
+  writeFileSync(decisions,JSON.stringify([{fingerprint,reason:'Independent fixture owners'},
+    {fingerprint:second,reason:'Separate deployment contracts'}]));
+  const before=readFileSync(join(review,'baseline.json'),'utf8');
+  if(invalid) writeFileSync(join(root,'d.js'),'changed\n');
+  const result=spawnSync(process.execPath,[new URL('./review-policy.mjs',import.meta.url).pathname,'accept-batch',root,decisions],{encoding:'utf8'});
+  if(invalid) {
+    assert.equal(result.status,1);assert.equal(readFileSync(join(review,'baseline.json'),'utf8'),before);
+  } else {
+    assert.equal(result.status,0,result.stderr);
+    const stored=JSON.parse(readFileSync(join(review,'baseline.json'),'utf8'));
+    assert.deepEqual(stored.intentional.map(x=>x.fingerprint),[fingerprint,second]);
+    assert.ok(stored.intentional.every(x=>x.reason && x.memberHashes.length===2));
+  }
+});
+
 function acceptAsync(root, fingerprint, reason, env) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [new URL("./review-policy.mjs", import.meta.url).pathname, "accept", root, fingerprint, reason], { env });

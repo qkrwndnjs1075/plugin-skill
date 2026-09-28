@@ -218,18 +218,23 @@ export function hash(value) {
 }
 
 function main(args) {
+  const usage = "Usage: review-policy.mjs accept <repo> <fingerprint> <reason> | accept-batch <repo> <decisions.json>";
   if (args.length === 1 && args[0] === "--help") {
-    process.stdout.write("Usage: review-policy.mjs accept <repo> <fingerprint> <reason>\n");
+    process.stdout.write(usage + "\n");
     return;
   }
   const [command, repoRoot, fingerprint, reason] = args;
-  if (args.length !== 4 || command !== "accept" || !FINGERPRINT.test(fingerprint)
-    || !reason?.trim()) {
-    throw new Error("Usage: review-policy.mjs accept <repo> <fingerprint> <reason>");
-  }
+  const batch = command === "accept-batch" && args.length === 3;
+  if (!batch && (args.length !== 4 || command !== "accept")) throw new Error(usage);
+  const decisions = batch ? JSON.parse(readFileSync(fingerprint, "utf8")) : [{fingerprint, reason}];
+  if (!Array.isArray(decisions) || !decisions.length
+    || decisions.some(entry => !entry || typeof entry.fingerprint !== "string" || !FINGERPRINT.test(entry.fingerprint)
+      || typeof entry.reason !== "string" || !entry.reason.trim())
+    || new Set(decisions.map(entry => entry.fingerprint)).size !== decisions.length) throw new Error(usage);
   const root = realpathSync(repoRoot);
   const reportPath = containedPath(root, ".nose-review/report.json");
-  const report = JSON.parse(readFileSync(reportPath, "utf8"));
+  const reportText = readFileSync(reportPath, "utf8");
+  const report = JSON.parse(reportText);
   const reviewDirectory = containedPath(root, ".nose-review");
   if (report?.schemaVersion !== SCHEMA_VERSION || typeof report.noseVersion !== "string"
     || !Array.isArray(report.candidates)) throw new Error("Report must have a supported schema and Nose version.");
@@ -238,14 +243,18 @@ function main(args) {
     throw new Error("Installed Nose version differs from the report or is unavailable; scan again.");
   }
   withBaselineLock(reviewDirectory, () => {
-    const current=JSON.parse(readFileSync(containedPath(root,'.nose-review/report.json'),'utf8'));
-    if(JSON.stringify(current)!==JSON.stringify(report)) throw new Error('Report changed while awaiting approval; scan again.');
-    const candidate = current.candidates.find((entry) => entry.fingerprint === fingerprint);
-    const memberHashes = candidate ? memberHashesForFamily(candidate, root) : [];
-    if (!candidate || hash(JSON.stringify(memberHashes)) !== fingerprint
-      || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
-      throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
-    }
+    if(readFileSync(containedPath(root,'.nose-review/report.json'),'utf8')!==reportText) throw new Error('Report changed while awaiting approval; scan again.');
+    const candidates = new Map(report.candidates.map(entry => [entry.fingerprint, entry]));
+    const memberHasher = createMemberHasher(root);
+    const accepted = decisions.map(({fingerprint, reason}) => {
+      const candidate = candidates.get(fingerprint);
+      const memberHashes = candidate ? memberHasher(candidate) : [];
+      if (!candidate || hash(JSON.stringify(memberHashes)) !== fingerprint
+        || (candidate.memberHashes !== undefined && !validMembership(candidate))) {
+        throw new Error("Fingerprint is absent from the current report or its source has changed; scan again.");
+      }
+      return {fingerprint, reason:reason.trim(), memberHashes};
+    });
     const baselineFile = join(reviewDirectory, "baseline.json");
     const baselineExists = lstatSync(baselineFile, { throwIfNoEntry: false });
     const baselinePath = baselineExists ? containedPath(root, baselineFile) : baselineFile;
@@ -255,11 +264,12 @@ function main(args) {
     if (!validBaseline(baseline) || report.noseVersion !== baseline.noseVersion) {
       throw new Error("Review baseline and report must have matching supported schema and Nose versions.");
     }
+    const acceptedFingerprints = new Set(accepted.map(entry => entry.fingerprint));
     const updated = {
       ...baseline,
       intentional: [
-        ...baseline.intentional.filter((entry) => entry.fingerprint !== fingerprint),
-        { fingerprint, reason: reason.trim(), memberHashes },
+        ...baseline.intentional.filter((entry) => !acceptedFingerprints.has(entry.fingerprint)),
+        ...accepted,
       ],
     };
     const temporary = join(dirname(baselinePath), `.baseline-${randomUUID()}.tmp`);
@@ -270,7 +280,8 @@ function main(args) {
       rmSync(temporary, { force: true });
     }
   });
-  process.stdout.write(`${JSON.stringify({ fingerprint, reason: reason.trim() })}\n`);
+  const recorded = decisions.map(({fingerprint,reason}) => ({fingerprint,reason:reason.trim()}));
+  process.stdout.write(`${JSON.stringify(batch ? {accepted:recorded} : recorded[0])}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
