@@ -70,6 +70,19 @@ test('equivalent committed trees reuse analysis across commits and agent session
   assert.equal(f.report().refs[0].secrets.status, 'passed');
 });
 
+test('equivalent committed trees reuse results from a linked worktree',t=>{
+  const f=fixture(t);
+  const first=f.run();assert.equal(first.status,1,first.stderr);
+  const candidates=f.report().candidates;
+  const other=join(f.root,'linked');
+  f.git('worktree','add','--detach',other,'HEAD');
+  const next=spawnSync(process.execPath,[runner,'origin','local-fixture'],{cwd:other,input:f.line(),encoding:'utf8'});
+  assert.equal(next.status,1,next.stderr);
+  assert.match(next.stderr,/verified result cache hit/);
+  assert.doesNotMatch(next.stderr,/scanner finished/);
+  assert.deepEqual(readReport(other).candidates,candidates);
+});
+
 test('local and remote scans reuse one locked source path without carrying files between commits', t=>{
   const f=fixture(t),bin=join(f.root,'fixture-bin'),state=join(f.root,'fixture-state'),calls=join(f.root,'calls.jsonl');
   mkdirSync(bin);
@@ -93,8 +106,9 @@ test('local and remote scans reuse one locked source path without carrying files
   assert.equal(rows[0].cwd,rows[1].cwd);
   assert.equal(rows[0].cache,rows[1].cache);
   assert.deepEqual(rows.map(row=>row.local),[true,false]);
-  assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot'));
-  assert.ok(!readdirSync(join(state,hash(f.root))).includes('snapshot.lock'));
+  const shared=join(state,hash(f.git('rev-parse','--path-format=absolute','--git-common-dir')));
+  assert.ok(!readdirSync(shared).includes('snapshot'));
+  assert.ok(!readdirSync(shared).includes('snapshot.lock'));
 });
 
 test('remote analysis is skipped when all families are outside changed files',t=>{
@@ -124,7 +138,7 @@ test('repeated pushed CommonJS growth reuses both local and remote verified resu
 });
 
 for(const redirect of ['snapshot','state']) test(`stable ${redirect} refuses symlinks without deleting the target`,t=>{
-  const f=fixture(t),state=join(f.root,'fixture-state'),owner=join(state,hash(f.root)),target=join(f.root,'keep');
+  const f=fixture(t),state=join(f.root,'fixture-state'),owner=join(state,hash(f.git('rev-parse','--path-format=absolute','--git-common-dir'))),target=join(f.root,'keep');
   mkdirSync(owner,{recursive:true});mkdirSync(target);writeFileSync(join(target,'keep.txt'),'preserve');
   if(redirect==='state'){rmSync(owner,{recursive:true});symlinkSync(target,owner);}
   else symlinkSync(target,join(owner,'snapshot'));

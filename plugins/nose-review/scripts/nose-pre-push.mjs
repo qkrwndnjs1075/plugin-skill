@@ -5,7 +5,7 @@ import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, r
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, hash, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
+import { cacheStateRoot, git, hash, projectRoot, scan, scanTimeoutMs, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline, withReviewLock } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { scanCommitsSecrets } from './commit-secrets.mjs';
@@ -49,8 +49,8 @@ function fileDigest(path, algorithm) {
 }
 
 function archivedScan(root, sha, operation, materializeSymlinks=false) {
-  const state = stateRoot(root);
-  return withReviewLock(join(state, 'snapshot.lock'), () => scanArchive(root, sha, operation, materializeSymlinks, state), 'snapshot scan');
+  const state = cacheStateRoot(root);
+  return withReviewLock(join(state, 'snapshot.lock'), () => scanArchive(root, sha, operation, materializeSymlinks, state), 'snapshot scan', scanTimeoutMs + 60_000);
 }
 
 function scanArchive(root, sha, operation, materializeSymlinks, state) {

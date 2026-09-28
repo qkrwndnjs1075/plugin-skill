@@ -154,8 +154,8 @@ function withBaselineLock(reviewDirectory, operation) {
   return withReviewLock(join(reviewDirectory, '.baseline.lock'), operation, 'baseline update');
 }
 
-export function withReviewLock(lock, operation, label = 'review') {
-  const deadline = Date.now() + 10_000;
+export function withReviewLock(lock, operation, label = 'review', timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
   const waiter = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     try {

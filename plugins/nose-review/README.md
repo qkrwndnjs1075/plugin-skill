@@ -211,7 +211,7 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   `RAYON_NUM_THREADS` to a positive integer up to available parallelism to choose
   another budget. Invalid values fail before scanning. This bounds worker
   concurrency, not total OS CPU percentage; it does not throttle unrelated tools.
-- Analysis cache persists under the project's runtime state directory, in
+- Analysis cache persists under the repository's shared runtime state directory, in
   `analysis-cache`; each scan prints its path. Nose owns content/configuration
   invalidation and its default 5 GiB storage budget. Use `nose cache status` or
   `nose cache clear` with `--dir` pointing to the printed directory when
@@ -219,6 +219,9 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   Cold scans can take longer with fewer workers; unchanged reruns benefit most.
   Source lines and span hashes are reused only within a scan, whose final source
   snapshot must still match. Manual acceptance always starts a fresh reader.
+- Linked worktrees share the cache through their canonical Git common directory.
+  Archive scans share a locked extraction path; editing-session registries remain
+  worktree-local. Gitless projects retain their project-local cache owner.
 - Complete commit and stable Git working-folder results use a separate `scan-results` cache in that state
   directory, limited to 32 entries and 2 GiB (512 MiB per entry, 16 MiB per record).
   Source and family records are serialized incrementally, avoiding a second

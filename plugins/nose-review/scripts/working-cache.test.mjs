@@ -4,7 +4,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSyn
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
-import {scan} from './review-runtime.mjs';
+import {scan, stateRoot, cacheStateRoot} from './review-runtime.mjs';
 
 function fixture(t) {
   const directory=realpathSync(mkdtempSync(join(tmpdir(),'nose-working-cache-')));
@@ -48,6 +48,16 @@ test('working scans reuse unchanged results and invalidate edit, add, delete and
   mkdirSync(join(root,'.nose-review'));
   writeFileSync(join(root,'.nose-review','baseline.json'),'{}');scan(root);assert.equal(count(),6);
   writeFileSync(join(root,'.git','info','exclude'),'*.js\n');scan(root);assert.equal(count(),7);
+});
+
+test('linked worktrees share results but preserve separate edit registries',t=>{
+  const {root,directory,git,count}=fixture(t);
+  const other=join(directory,'other');git('worktree','add','--detach',other,'HEAD');
+  assert.equal(cacheStateRoot(root),cacheStateRoot(other));
+  assert.notEqual(stateRoot(root),stateRoot(other));
+  const first=scan(root);assert.deepEqual(scan(other),first);assert.equal(count(),1);
+  writeFileSync(join(other,'a.js'),'export const a = 9;\n');scan(other);assert.equal(count(),2);
+  assert.deepEqual(scan(root),first);assert.equal(count(),2);
 });
 
 test('ignore control mutation during a working scan rejects the result',t=>{

@@ -88,6 +88,13 @@ export function stateRoot(root) {
   if (lstatSync(directory).isSymbolicLink()) throw new Error('Review state directory must not be a symlink');
   return directory;
 }
+export function cacheStateRoot(root) {
+  const owner = isGit(root)
+    ? realpathSync(git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).trim())
+    : realpathSync(root);
+  return stateRoot(owner);
+}
+
 function workingIdentity(root) {
   if (!isGit(root)) return null;
   const files = [...new Set(git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean))].sort();
@@ -190,7 +197,7 @@ function resultIdentity(root, args, version, inputIdentity, env, onSkip) {
     const ignorePaths=[join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(),'.config'),'git','ignore'),
       ...ignores.stdout.trim().split('\n').filter(Boolean).map(path=>resolve(root,path))];
     const globalIgnores=[...new Set(ignorePaths)].map(path=>[path,existsSync(path)?hash(readFileSync(path)):null]);
-    return {inputIdentity,root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
+    return {inputIdentity,root:isGit(root)?cacheStateRoot(root):root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
       policy,args,settings,globalIgnores,node:process.version,
       environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
   } catch { return skip('identity-unavailable'); }
@@ -212,7 +219,7 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
   const started = Date.now();
   const version = spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
   if (version.status!==0) throw new Error('Nose executable unavailable');
-  const cacheDirectory = stateRoot(realpathSync(cacheOwner));
+  const cacheDirectory = cacheStateRoot(cacheOwner);
   const cache = join(cacheDirectory, 'analysis-cache');
   mkdirSync(cache,{recursive:true,mode:0o700});
   if (lstatSync(cache).isSymbolicLink()) throw new Error('Analysis cache must not be a symlink');
