@@ -6,6 +6,7 @@ import { tmpdir, homedir, availableParallelism } from 'node:os';
 import { createMemberHasher, hash } from './review-policy.mjs';
 import { readScanResult, writeScanResult } from './scan-result-cache.mjs';
 export { hash } from './review-policy.mjs';
+export const shellQuote = text => "'" + text.replaceAll("'", "'\"'\"'") + "'";
 
 export const scanTimeoutMs = 600_000;
 export const refTimeoutMs = 2 * scanTimeoutMs + 60_000;
@@ -207,9 +208,8 @@ function scannerEnvironment(root, env) {
   if (!isGit(root)) return env;
   // Git wrappers and hooks prepend executable paths. Run both entry points
   // with Git's actual child environment, including for effective-config reads.
-  const quote=value=>"'"+value.replaceAll("'", "'\\''")+"'";
   const script='console.log(JSON.stringify(Object.fromEntries(["PATH","GIT_EXEC_PATH","GIT_PREFIX"].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]))))';
-  const command='!'+quote(process.execPath)+' -e '+quote(script);
+  const command='!'+shellQuote(process.execPath)+' -e '+shellQuote(script);
   const probe=spawnSync('git',['-c','alias.nose-review-env='+command,'nose-review-env'],{
     cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024,
   });

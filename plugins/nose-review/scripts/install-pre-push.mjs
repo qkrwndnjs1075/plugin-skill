@@ -4,11 +4,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync, appendFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { refTimeoutMs } from './review-runtime.mjs';
+import { refTimeoutMs, shellQuote as quote } from './review-runtime.mjs';
 
 const marker='# nose-review managed pre-push v1';
 const sources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs'];
-const quote=text=>"'"+text.replaceAll("'","'\"'\"'")+"'";
 function hookContent(release,data) {
   const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);
   const bootstrap=`const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),url=require('node:url');
