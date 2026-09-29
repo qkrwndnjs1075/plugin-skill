@@ -41,6 +41,9 @@ full-project cleanup, use the refreshed project-wide candidates even if an older
 report exists, processing them in bounded batches.
 
 The helper uses `CODEX_THREAD_ID` to recognize any legacy hook registration.
+When working files match `HEAD`, it scans the same verified commit archive used
+by pre-push so the final review and push can reuse one analysis. Otherwise it
+scans current working files. A cache hit still verifies source membership.
 SessionStart now only installs pre-push; it does not register an editing lock.
 The helper's scan stability check does not prove edit ownership. Coordinate
 overlapping edits and preserve unrelated work before changing candidate files.
@@ -79,8 +82,9 @@ pushes; the authorized-push recovery below is the scoped exception.
 
 When a push the user requested fails with `NOSE_DUPLICATION_BLOCKED`, apply this
 workflow to that report without waiting for a separate cleanup request. After
-tests and any required final scan, commit only scoped source fixes, preserve unrelated
-index and worktree changes, and keep source-bound intentional decisions in the
+tests, commit only scoped source fixes, then refresh once on the final committed
+source before recording intentional decisions. Preserve unrelated index and
+worktree changes, and keep source-bound intentional decisions in the
 locally excluded `.nose-review/baseline.json`, then retry the same authorized push.
 The gate applies those decisions only when their current family fingerprints and
 member hashes match the verified pushed snapshot. Never force-push, bypass hooks,

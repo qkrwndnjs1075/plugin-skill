@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from '
 import { join } from 'node:path';
 import { atomicJson, hash, projectRoot, scan, snapshot, withRegistry } from './review-runtime.mjs';
 
+import { archivedScan, equivalentHead, relativeFamilies } from './verified-archive.mjs';
+
 function assertAvailable(directory) {
   if (existsSync(join(directory,'collision'))) throw new Error('Concurrent registry activity; wait for other sessions to finish');
   const own=process.env.CODEX_THREAD_ID ? hash(process.env.CODEX_THREAD_ID)+'.json' : null;
@@ -15,10 +17,17 @@ try {
   if(process.argv.length!==3) throw new Error('Usage: nose-fix-scan.mjs <project>');
   const root=projectRoot(process.argv[2]);
   withRegistry(root,assertAvailable);
-  const result=scan(root);
+  const head=equivalentHead(root);
+  const result=head ? archivedScan(root,head,(directory,files,identity)=>{
+    process.stderr.write(`[nose fix] scanning verified HEAD ${head}\n`);
+    const committed=scan(directory,files,root,identity);
+    return {...committed,families:relativeFamilies(committed.families,directory)};
+  }) : scan(root);
   withRegistry(root,directory=>{
     assertAvailable(directory);
-    if(JSON.stringify(result.files)!==JSON.stringify(snapshot(root))) throw new Error('Code changed after scan');
+    if(head && equivalentHead(root)!==head) throw new Error('Working inputs changed after committed scan');
+    const ordered=files=>JSON.stringify(Object.entries(files).sort(([a],[b])=>a.localeCompare(b)));
+    if(ordered(result.files)!==ordered(snapshot(root))) throw new Error('Code changed after scan');
     const review=join(root,'.nose-review');
     mkdirSync(review,{recursive:true});
     if(realpathSync(review)!==join(realpathSync(root),'.nose-review')) throw new Error('Review directory must not redirect outside project');

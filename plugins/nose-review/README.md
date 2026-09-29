@@ -104,7 +104,7 @@ Outgoing commit metadata and the pushed annotated-tag chain are scanned too;
 findings use `git-metadata/<object-id>.commit.txt` or `.tag.txt` locations.
 For duplication checks, `.gitignore`, `.ignore`, and `nose.ignore.json` are
 removed only from verified temporary commit snapshots, so these files cannot
-hide a tracked copy. Manual working-folder scans retain their normal exclusions.
+hide a tracked copy. Working-folder scans retain their normal exclusions.
 
 On a new remote ref with no committed baseline, all unreviewed families in the
 pushed snapshot block delivery. On an existing ref, only duplication introduced,
@@ -195,6 +195,13 @@ full-project scan. A manual scan reads current working files, which may differ
 from the commit inspected by pre-push. Treat stored commit findings as candidates
 and refresh before editing or accepting them.
 
+When the working tree matches `HEAD`, the Nose Fix helper uses the same verified
+commit archive as pre-push, including tracked files hidden by ignore rules. Its
+result can be reused by the push without another full analysis. Uncommitted edits
+or additional working files use the working-folder scan instead. In authorized
+push recovery, finish and verify the source fixes, commit them, then refresh once
+and record intentional decisions before retrying the push.
+
 Keep `.nose-review/` in the checkout's Git exclude file. Its baseline records
 local source-bound review decisions, while reports and failure history are
 generated evidence. Acceptance rejects stale source spans or incompatible Nose versions.
@@ -237,11 +244,15 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   shell variables reach neither the scanner nor the cache key. Environment values
   are not written to the cache. Custom scanner wrappers cannot rely on unrelated
   caller variables.
+  Git-managed scans resolve Git's child search path before launching Nose, so
+  direct review and installed hooks use the same environment and cache identity.
   Working-folder identities include tracked and visible untracked file contents,
   file membership, nested/ancestor ignore controls and Git's local exclude file.
   Source and effective inputs are revalidated before a cached result is returned.
   Working-folder and archived-commit results remain distinct: push scans cover
-  tracked ignored files too. Review report/baseline/failure JSON does not invalidate
+  tracked ignored files too. The Nose Fix helper selects the archive path when
+  working files match `HEAD`, enabling review-to-push reuse without merging these
+  different cache identities. Review report/baseline/failure JSON does not invalidate
   working-folder results. Configuration files, external ignores or semantic packs
   disable result reuse. Symlinks include their link text and target contents in the
   identity; cyclic, oversized or unsupported linked inputs bypass reuse, as do

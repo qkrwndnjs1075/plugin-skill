@@ -190,7 +190,7 @@ function resultIdentity(root, args, version, inputIdentity, env, onSkip) {
     if (settings.query['semantic-pack-lock'] !== null || settings.query['semantic-packs'].length)
       return skip('external-semantic-pack');
     const scripts=dirname(fileURLToPath(import.meta.url));
-    const policy=['review-runtime.mjs','review-policy.mjs','nose-pre-push.mjs','scan-result-cache.mjs']
+    const policy=['review-runtime.mjs','review-policy.mjs','nose-pre-push.mjs','verified-archive.mjs','scan-result-cache.mjs']
       .map(name=>[name,hash(readFileSync(join(scripts,name)))]);
     const ignores=spawnSync('git',['config','--path','--get-all','core.excludesFile'],{cwd:root,env,encoding:'utf8',timeout:5000});
     if (ignores.error || ![0,1].includes(ignores.status)) return skip('global-ignore-config-unavailable');
@@ -203,6 +203,25 @@ function resultIdentity(root, args, version, inputIdentity, env, onSkip) {
   } catch { return skip('identity-unavailable'); }
 }
 
+function scannerEnvironment(root, env) {
+  if (!isGit(root)) return env;
+  // Git wrappers and hooks prepend executable paths. Run both entry points
+  // with Git's actual child environment, including for effective-config reads.
+  const quote=value=>"'"+value.replaceAll("'", "'\\''")+"'";
+  const script='console.log(JSON.stringify(Object.fromEntries(["PATH","GIT_EXEC_PATH","GIT_PREFIX"].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]))))';
+  const command='!'+quote(process.execPath)+' -e '+quote(script);
+  const probe=spawnSync('git',['-c','alias.nose-review-env='+command,'nose-review-env'],{
+    cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024,
+  });
+  if(probe.status!==0) throw new Error('Git scanner environment unavailable');
+  const effective=JSON.parse(probe.stdout);
+  for(const key of ['PATH','GIT_EXEC_PATH','GIT_PREFIX']) {
+    if(effective[key]!==undefined && typeof effective[key]!=='string') throw new Error('Invalid Git scanner environment');
+  }
+  return {...env,...Object.fromEntries(['PATH','GIT_EXEC_PATH','GIT_PREFIX'].filter(key=>effective[key]!==undefined).map(key=>[key,
+    key==='PATH' ? [...new Set(effective[key].split(delimiter))].join(delimiter) : effective[key]]))};
+}
+
 export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
   const parallelism = availableParallelism();
   const threads = process.env.RAYON_NUM_THREADS ?? String(Math.min(2, parallelism));
@@ -212,8 +231,8 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
   // scanner, Git/config, locale and OS runtime inputs in both child and cache key.
   const runtimeVariables=new Set(['PATH','HOME','USERPROFILE','HOMEDRIVE','HOMEPATH','LANG','LANGUAGE',
     'TMPDIR','TMP','TEMP','SystemRoot','SYSTEMROOT','WINDIR','PATHEXT']);
-  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>
-    runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key)));
+  const env=scannerEnvironment(cacheOwner,Object.fromEntries(Object.entries(process.env).filter(([key])=>
+    runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key))));
   env.RAYON_NUM_THREADS=threads;
   const before = snapshot(root, verifiedFiles);
   const started = Date.now();
