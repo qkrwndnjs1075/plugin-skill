@@ -5,21 +5,11 @@ import { mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, readdirSyn
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { install } from './install-pre-push.mjs';
-import { gitFixture, pushGit, readReport } from './test-helpers.mjs';
+import { duplicateSource as source, gitFixture, pushGit, readReport } from './test-helpers.mjs';
 import { hash } from './review-runtime.mjs';
 
 const runner = new URL('./nose-pre-push.mjs', import.meta.url).pathname;
 const zero = '0'.repeat(40);
-const source = name => `export function ${name}(items) {
-  const result = [];
-  for (const item of items) {
-    if (item.enabled && item.value > 0) {
-      const value = item.value * 100;
-      result.push({name: item.name.trim(), value, label: String(value)});
-    }
-  }
-  return result.sort((a, b) => a.value - b.value);
-}\n`;
 
 function fixture(t) {
   const {root, git} = gitFixture(t, 'nose-push-test-');

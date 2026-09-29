@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { install } from './install-pre-push.mjs';
-import { gitFixture } from './test-helpers.mjs';
+import { duplicateSource as source, gitFixture } from './test-helpers.mjs';
 import { register, stateRoot, hash } from './review-runtime.mjs';
 
 test('skill scan permits its own session and preserves registration, but refuses another session', t=>{
@@ -35,16 +35,6 @@ test('skill scan permits its own session and preserves registration, but refuses
 
 for (const change of ['clean','installed-clean','modified','added','deleted','ignored-untracked','assume-unchanged','staged','crlf','internal-link']) test(`fix scan followed by pre-push preserves commit coverage with ${change} working inputs`, t=>{
   const {root,git}=gitFixture(t,'nose-fix-reuse-');
-  const source=name=>`export function ${name}(items) {
-    const result=[];
-    for (const item of items) {
-      if (item.enabled && item.value > 0) {
-        const value=item.value * 100;
-        result.push({name:item.name.trim(),value,label:String(value)});
-      }
-    }
-    return result.sort((a,b)=>a.value-b.value);
-  }\n`;
   writeFileSync(join(root,'a.js'),source('alpha'));
   writeFileSync(join(root,'b.js'),source('beta'));
   writeFileSync(join(root,'.gitignore'),'b.js\nignored.js\n.nose-review/\n');
