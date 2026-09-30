@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { install } from './install-pre-push.mjs';
+import { install, payloadSources } from './install-pre-push.mjs';
 import { refTimeoutMs, scanTimeoutMs } from './review-runtime.mjs';
 
 function fixture(t) {
@@ -15,7 +15,7 @@ function fixture(t) {
   const repo=join(temp,'repo'),source=join(temp,'payload');
   mkdirSync(repo);mkdirSync(source);
   execFileSync('git',['init','-q'],{cwd:repo});
-  for(const name of ['verified-archive.mjs','review-runtime.mjs','review-policy.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs']) writeFileSync(join(source,name),'');
+  for(const name of payloadSources) writeFileSync(join(source,name),'');
   writeFileSync(join(source,'failure-history.mjs'),'export function saveFailure() { return "fixture-history"; }');
   writeFileSync(join(source,'nose-pre-push.mjs'),"import {readFileSync,writeFileSync} from 'node:fs';writeFileSync(process.env.NOSE_TEST_OUTPUT,JSON.stringify({args:process.argv.slice(2),input:readFileSync(0,'utf8')}));");
   return {temp,repo,source,hooks:join(repo,'.git/hooks')};

@@ -5,11 +5,11 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { git, hash, projectRoot, scan, sameDuplicateInputs, stateRoot } from './review-runtime.mjs';
+import { git, projectRoot, sameDuplicateInputs } from './review-runtime.mjs';
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, reviewedReductions, validBaseline } from './review-policy.mjs';
 import { scanSecrets } from './secret-scan.mjs';
 import { scanCommitsSecrets } from './commit-secrets.mjs';
-import { archivedScan, relativeFamilies } from './verified-archive.mjs';
+import { scanCommit } from './verified-archive.mjs';
 import { saveFailure } from './failure-history.mjs';
 
 const zero = /^0+$/;
@@ -24,6 +24,19 @@ function remoteTrackingCommits(root, remoteName) {
   return [...new Set(commits)];
 }
 
+function readBaseline(load, source, result, warnings, reductions) {
+  try {
+    const baseline=JSON.parse(load());
+    if(!validBaseline(baseline) || baseline.noseVersion!==result.noseVersion)
+      throw new Error('Unsupported baseline schema or Nose version');
+    reductions.push(...reviewedReductions(result.families,baseline,result.noseVersion));
+    return {candidates:filterReviewed(result.families,baseline,result.noseVersion),hasBaseline:true,baselineSource:source.toLowerCase()};
+  } catch(error) {
+    warnings.push(`${error instanceof SyntaxError?'Invalid baseline JSON':error.message}; ${source.toLowerCase()} baseline ignored`);
+    return {candidates:result.families,hasBaseline:true,baselineSource:source.toLowerCase()};
+  }
+}
+
 function baselineAt(directory, source, result, warnings, reductions) {
   const review = lstatSync(join(directory, '.nose-review'), {throwIfNoEntry:false});
   if (!review) return null;
@@ -34,23 +47,30 @@ function baselineAt(directory, source, result, warnings, reductions) {
   const path = join(directory, '.nose-review', 'baseline.json');
   const stat = lstatSync(path, {throwIfNoEntry:false});
   if (!stat) return null;
-  try {
+  return readBaseline(()=>{
     if (!stat.isFile()) throw new Error('Baseline must be a regular file');
-    const baseline = JSON.parse(readFileSync(path, 'utf8'));
-    if (!validBaseline(baseline) || baseline.noseVersion !== result.noseVersion) {
-      throw new Error('Unsupported baseline schema or Nose version');
-    }
-    reductions.push(...reviewedReductions(result.families,baseline,result.noseVersion));
-    return {candidates:filterReviewed(result.families, baseline, result.noseVersion), hasBaseline:true,
-      baselineSource:source.toLowerCase()};
-  } catch (error) {
-    warnings.push(`${error instanceof SyntaxError?'Invalid baseline JSON':error.message}; ${source.toLowerCase()} baseline ignored`);
-    return {candidates:result.families, hasBaseline:true, baselineSource:source.toLowerCase()};
-  }
+    return readFileSync(path,'utf8');
+  },source,result,warnings,reductions);
 }
 
-function baselineCandidates(snapshotDirectory, root, result, warnings, reductions) {
-  return baselineAt(snapshotDirectory, 'Pushed', result, warnings, reductions)
+function pushedBaseline(root, sha, result, warnings, reductions) {
+  const entry=file=>git(root,['ls-tree','-z',sha,'--',file]).split('\0').find(Boolean)?.split(/\t(.*)/s)[0].split(' ');
+  const review=entry('.nose-review');
+  if(!review) return null;
+  if(review[1]!=='tree') {
+    warnings.push('Pushed baseline directory is unsafe; baseline ignored');
+    return {candidates:result.families,hasBaseline:true,baselineSource:'pushed'};
+  }
+  const baseline=entry('.nose-review/baseline.json');
+  if(!baseline) return null;
+  return readBaseline(()=>{
+    if(baseline[1]!=='blob' || !['100644','100755'].includes(baseline[0])) throw new Error('Baseline must be a regular file');
+    return git(root,['cat-file','blob',baseline[2]]);
+  },'Pushed',result,warnings,reductions);
+}
+
+function baselineCandidates(root, sha, result, warnings, reductions) {
+  return pushedBaseline(root, sha, result, warnings, reductions)
     ?? baselineAt(root, 'Local', result, warnings, reductions)
     ?? {candidates:result.families, hasBaseline:false};
 }
@@ -130,13 +150,8 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         continue;
       }
       advise(`local ${localSha}: preparing and scanning verified tree`);
-      const local = archivedScan(root, localSha, (directory, files, identity) => {
-        const result=scan(directory, files, root, identity);
-        const policy=baselineCandidates(directory, root, result, record.warnings, record.reductions);
-        return {noseVersion:result.noseVersion, families:result.families,
-          candidates:policy.candidates, hasBaseline:policy.hasBaseline,
-          baselineSource:policy.baselineSource, directory};
-      });
+      const result=scanCommit(root,localSha);
+      const local={...result,...baselineCandidates(root,localSha,result,record.warnings,record.reductions)};
       if(local.baselineSource) record.baselineSource=local.baselineSource;
       if (comparisonSha) {
         git(root, ['cat-file', '-e', `${comparisonSha}^{commit}`]);
@@ -144,7 +159,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         local.candidates=filterChangedCandidates(local.candidates,changedFiles);
         if (local.candidates.length) {
           advise(`remote ${comparisonSha}: preparing comparison scan for ${local.candidates.length} local candidate(s)`);
-          const remote=archivedScan(root, comparisonSha, (directory, files, identity) => scan(directory, files, root, identity));
+          const remote=scanCommit(root,comparisonSha);
           if (remote.noseVersion !== local.noseVersion) throw new Error('Remote comparison uses a different Nose version');
           const comparisonStarted=performance.now();
           advise(`comparing ${local.candidates.length} local candidate(s) with ${remote.families.length} remote families`);
@@ -156,7 +171,7 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         }
       }
       noseVersion = local.noseVersion;
-      record.candidates = relativeFamilies(local.candidates, local.directory);
+      record.candidates = local.candidates;
       record.status = record.warnings.length || record.secrets.status==='unavailable' ? 'error' : record.candidates.length || record.secrets.status==='blocked' ? 'blocked' : 'scanned';
       if(record.secrets.status==='unavailable') record.warnings.push(record.secrets.reason);
       for(const reduction of record.reductions) advise(`ADVISORY reduction: ${reduction.reviewedFingerprint} -> ${reduction.fingerprint}`);

@@ -273,6 +273,52 @@ test('report directory symlink is rejected and export-ignore does not produce fa
   assert.equal(f.report().refs[0].status, 'error');
 });
 
+test('immutable hits apply the committed baseline before conflicting local policy',t=>{
+  const f=fixture(t);
+  assert.equal(f.run().status,1);
+  const report=f.report();
+  const baseline={schemaVersion:1,noseVersion:report.noseVersion,accepted:report.candidates.map(family=>family.fingerprint),intentional:[]};
+  const file=join(f.root,'.nose-review','baseline.json');
+  writeFileSync(file,JSON.stringify(baseline));
+  f.git('add','.nose-review/baseline.json');f.git('commit','-qm','committed review');
+  const accepted=f.git('rev-parse','HEAD');
+  writeFileSync(file,'invalid local policy');
+  assert.equal(f.run(f.line(accepted)).status,0);
+  const warm=f.run(f.line(accepted));
+  assert.equal(warm.status,0,warm.stderr);
+  assert.equal(f.report().refs[0].baselineSource,'pushed');
+  assert.match(warm.stderr,/verified result cache hit/);
+  assert.doesNotMatch(warm.stderr,/extraction finished/);
+
+  writeFileSync(file,'invalid pushed policy');
+  f.git('add','.nose-review/baseline.json');f.git('commit','-qm','invalid committed review');
+  const invalid=f.git('rev-parse','HEAD');
+  writeFileSync(file,JSON.stringify(baseline));
+  assert.equal(f.run(f.line(invalid)).status,2);
+  const blocked=f.run(f.line(invalid));
+  assert.equal(blocked.status,2,blocked.stderr);
+  assert.match(blocked.stderr,/Invalid baseline JSON; pushed baseline ignored/);
+  assert.match(blocked.stderr,/verified result cache hit/);
+  assert.doesNotMatch(blocked.stderr,/extraction finished/);
+});
+
+test('a committed baseline symlink fails closed on an immutable result hit',t=>{
+  const f=fixture(t);
+  assert.equal(f.run().status,1);
+  const report=f.report();
+  const baseline={schemaVersion:1,noseVersion:report.noseVersion,accepted:report.candidates.map(family=>family.fingerprint),intentional:[]};
+  writeFileSync(join(f.root,'policy.json'),JSON.stringify(baseline));
+  symlinkSync('../policy.json',join(f.root,'.nose-review','baseline.json'));
+  f.git('add','policy.json','.nose-review/baseline.json');f.git('commit','-qm','symlink review');
+  const input=f.line(f.git('rev-parse','HEAD'));
+  assert.equal(f.run(input).status,2);
+  const warm=f.run(input);
+  assert.equal(warm.status,2,warm.stderr);
+  assert.match(warm.stderr,/Baseline must be a regular file; pushed baseline ignored/);
+  assert.match(warm.stderr,/verified result cache hit/);
+  assert.doesNotMatch(warm.stderr,/extraction finished/);
+});
+
 for(const resolution of ['refactor','intentional']) test(`real push is blocked until ${resolution} resolves findings`,t=>{
   const f=fixture(t);
   const remote=join(f.root,'remote.git');

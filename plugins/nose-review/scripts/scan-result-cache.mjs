@@ -94,7 +94,8 @@ function validateResult(result) {
 }
 
 // Only call after scan() has completed source-stability and membership verification.
-// Identity must include every scan input and policy/scanner implementation identity.
+// Identity must include every native input and the source-proof implementation.
+// Review decisions are reapplied by the caller rather than cached with analysis.
 export function writeScanResult({directory, identity, result, onEvent}) {
   let temporary;
   try {

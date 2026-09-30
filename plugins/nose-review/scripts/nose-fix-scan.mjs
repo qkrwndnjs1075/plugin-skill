@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from '
 import { join } from 'node:path';
 import { atomicJson, hash, projectRoot, scan, snapshot, withRegistry } from './review-runtime.mjs';
 
-import { archivedScan, equivalentHead, relativeFamilies } from './verified-archive.mjs';
+import { equivalentHead, scanCommit } from './verified-archive.mjs';
 
 function assertAvailable(directory) {
   if (existsSync(join(directory,'collision'))) throw new Error('Concurrent registry activity; wait for other sessions to finish');
@@ -18,11 +18,8 @@ try {
   const root=projectRoot(process.argv[2]);
   withRegistry(root,assertAvailable);
   const head=equivalentHead(root);
-  const result=head ? archivedScan(root,head,(directory,files,identity)=>{
-    process.stderr.write(`[nose fix] scanning verified HEAD ${head}\n`);
-    const committed=scan(directory,files,root,identity);
-    return {...committed,families:relativeFamilies(committed.families,directory)};
-  }) : scan(root);
+  if(head) process.stderr.write(`[nose fix] scanning verified HEAD ${head}\n`);
+  const result=head ? scanCommit(root,head) : scan(root);
   withRegistry(root,directory=>{
     assertAvailable(directory);
     if(head && equivalentHead(root)!==head) throw new Error('Working inputs changed after committed scan');

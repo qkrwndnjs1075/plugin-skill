@@ -70,8 +70,9 @@ and trailing whitespace.
 When no candidates remain, the remote commit is still checked for availability;
 the report records `comparisonBase.analysisSkipped: no-candidates`. Otherwise,
 verified commit analyses can reuse a complete result from the private project
-cache. Archives and source membership are verified again on cache hits, and local
-review decisions are reapplied each time. Reuse never records approval.
+cache. An authenticated immutable-tree hit can return before extraction; current
+review decisions are reapplied each time. Other paths verify source membership
+again. Reuse never records approval.
 
 New intentional decisions include verified per-member hashes. When a reviewed
 family disappears and the remaining members are a strict sub-multiset of it,
@@ -235,9 +236,18 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   whole-report JSON string. A private-key MAC authenticates the complete entry
   before a loaded result is returned. Invalid, modified or oversized entries
   fall back to analysis. Older cache formats are misses. Identity includes the actual Git tree
-  inventory, scanner executable bytes/version, wrapper policy, effective settings,
-  global ignore-file contents and the scanner environment digest. Equivalent trees
+  inventory, scanner executable bytes/version, preparation and source-proof semantics,
+  effective settings, global ignore configuration/content and the scanner environment digest. Equivalent trees
   can reuse analysis across commits; each commit's secret checks still run.
+  Review-policy or progress-log changes do not discard native analysis. On a
+  first committed scan, Git blob verification also computes the initial source
+  hashes in the same read; the final independent source check remains mandatory.
+  On an immutable-tree hit, authenticated source/member evidence from the fully
+  verified tree replaces extraction and repeated source reads. Configuration
+  probes and current input identity are still checked before and after loading.
+  Root TOML configuration and links outside the tracked tree retain the full
+  archive path. Internal links resolve component by component before `..`;
+  absolute, dangling and cyclic links also retain full verification.
   The native scanner receives only scanner/Rayon, Git/XDG, locale, loader and OS
   path/home/temp environment inputs. Those inputs are all hashed, including
   `NOSE_*` overrides absent from `--show-config`. Agent-session and unrelated
@@ -254,7 +264,7 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   including in linked worktrees.
   Working-folder identities include tracked and visible untracked file contents,
   file membership, nested/ancestor ignore controls and Git's local exclude file.
-  Source and effective inputs are revalidated before a cached result is returned.
+  Mutable source and effective inputs are revalidated before a cached result is returned.
   Working-folder and archived-commit results remain distinct: push scans cover
   tracked ignored files too. The Nose Fix helper selects the archive path when
   working files match `HEAD`, enabling review-to-push reuse without merging these
@@ -274,8 +284,9 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   operation, outcome and reason: for example `read miss: not-found`,
   `write skipped: missing-source-member`, `write skipped: entry-too-large`,
   `identity skipped: external-config`, or `read hit: verified-result`.
-  A loaded entry still has to pass version, source-snapshot and membership checks
-  before the `verified result cache hit` message confirms reuse. CommonJS `.cjs`
+  A loaded entry passes authentication, version and current-input checks before
+  the `verified result cache hit` message confirms reuse. Mutable scans additionally
+  repeat source-snapshot and membership checks. CommonJS `.cjs`
   and short HTML `.htm` files are included in source snapshots.
 - Gitless/manual snapshot scans skip dependency/build folders and symlinks;
   limits are 20,000 visited entries, depth 64, 10,000 source files,
@@ -297,6 +308,8 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   verification, result write and total time. The legacy `scanner finished`
   marker measures native execution only. Scan totals include the initial source
   snapshot and result writes; archive totals also include lock wait and cleanup.
+  Immutable hits report `immutable result verification` and omit extraction and
+  source-snapshot phases.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

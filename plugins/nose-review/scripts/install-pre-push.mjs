@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { refTimeoutMs, shellQuote as quote } from './review-runtime.mjs';
 
 const marker='# nose-review managed pre-push v1';
-const sources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs'];
+export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs'];
 function hookContent(release,data) {
   const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);
   const bootstrap=`const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),url=require('node:url');
@@ -120,7 +120,7 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
     const existing=existsSync(hook)?readFileSync(hook,'utf8'):null;
     const ours=existing?.startsWith('#!/bin/sh\n'+marker+'\n');
     if(existing!==null && !ours) throw new Error('Nose hook path is occupied by an unmanaged file');
-    const data=sources.map(name=>[name,readFileSync(join(source,name),'utf8')]);
+    const data=payloadSources.map(name=>[name,readFileSync(join(source,name),'utf8')]);
     const dispatcher=`import {readFileSync} from 'node:fs';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';

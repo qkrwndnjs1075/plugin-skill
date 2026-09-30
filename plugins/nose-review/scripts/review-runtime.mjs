@@ -1,17 +1,16 @@
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join, extname, dirname, parse, delimiter, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { tmpdir, homedir, availableParallelism } from 'node:os';
-import { createMemberHasher, hash } from './review-policy.mjs';
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join, dirname, parse, resolve } from 'node:path';
+import { tmpdir, homedir } from 'node:os';
+import { createMemberHasher, hash, isSourceFile, verifiedFamilies } from './source-evidence.mjs';
 import { readScanResult, writeScanResult } from './scan-result-cache.mjs';
-export { hash } from './review-policy.mjs';
-export const shellQuote = text => "'" + text.replaceAll("'", "'\"'\"'") + "'";
+import { scannerInputs } from './scanner-inputs.mjs';
+export { hash } from './source-evidence.mjs';
+export { shellQuote } from './scanner-inputs.mjs';
 
 export const scanTimeoutMs = 600_000;
 export const refTimeoutMs = 2 * scanTimeoutMs + 60_000;
 
-const extensions = new Set(['.c','.cpp','.cc','.h','.hpp','.css','.cts','.go','.htm','.html','.java','.js','.jsx','.cjs','.mjs','.mts','.py','.pyi','.rb','.rs','.svelte','.swift','.ts','.tsx','.vue']);
 const excluded = new Set(['.git','.nose-review','node_modules','.venv','venv','__pycache__','dist','build','target','vendor','.next','.nuxt','coverage','.cache']);
 export function projectRoot(cwd) {
   if (typeof cwd !== 'string' || !cwd) throw new Error('Project directory is required');
@@ -40,7 +39,7 @@ function plainFiles(root) {
       if(excluded.has(entry.name) || entry.isSymbolicLink()) continue;
       const path=directory?directory+'/'+entry.name:entry.name;
       if(entry.isDirectory()) walk(path,depth+1);
-      else if(entry.isFile() && extensions.has(extname(path).toLowerCase())) files.push(path);
+      else if(entry.isFile() && isSourceFile(path)) files.push(path);
     }
   }
   walk('',0);
@@ -67,7 +66,7 @@ export function snapshot(root, verifiedFiles) {
   const entries = [];
   let bytes=0;
   for (const file of files) {
-    if (!extensions.has(extname(file).toLowerCase())) continue;
+    if (!isSourceFile(file)) continue;
     try {
       const stat=lstatSync(join(root,file));
       if (!stat.isFile()) continue;
@@ -173,109 +172,57 @@ export function register(root, session) {
     return record;
   });
 }
-function resultIdentity(root, args, version, inputIdentity, env, onSkip) {
-  const skip=reason=>{onSkip?.(reason);return null;};
-  if (!inputIdentity) return skip('no-content-identity');
-  try {
-    const executable = (env.PATH ?? '').split(delimiter).map(directory=>resolve(root,directory,'nose'))
-      .find(path=>{try {accessSync(path,constants.X_OK);return lstatSync(realpathSync(path)).isFile();} catch {return false;}});
-    if (!executable) return skip('executable-unresolved');
-    const config = spawnSync(executable,[...args,'--show-config'],{cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
-    if (config.status !== 0) return skip('effective-config-unavailable');
-    const settings = JSON.parse(config.stdout);
-    // External configuration can refer to mutable files outside the verified tree.
-    if (settings.schema !== 'nose.query-config/v1' || !settings.query
-      || !Array.isArray(settings.query['semantic-packs'])) return skip('effective-config-unsupported');
-    if (settings.config_file !== null) return skip('external-config');
-    if (settings.query['ignore-file'] !== null) return skip('external-ignore');
-    if (settings.query['semantic-pack-lock'] !== null || settings.query['semantic-packs'].length)
-      return skip('external-semantic-pack');
-    const scripts=dirname(fileURLToPath(import.meta.url));
-    const policy=['review-runtime.mjs','review-policy.mjs','nose-pre-push.mjs','verified-archive.mjs','scan-result-cache.mjs']
-      .map(name=>[name,hash(readFileSync(join(scripts,name)))]);
-    const ignores=spawnSync('git',['config','--path','--get-all','core.excludesFile'],{cwd:root,env,encoding:'utf8',timeout:5000});
-    if (ignores.error || ![0,1].includes(ignores.status)) return skip('global-ignore-config-unavailable');
-    const ignorePaths=[join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(),'.config'),'git','ignore'),
-      ...ignores.stdout.trim().split('\n').filter(Boolean).map(path=>resolve(root,path))];
-    const globalIgnores=[...new Set(ignorePaths)].map(path=>[path,existsSync(path)?hash(readFileSync(path)):null]);
-    return {inputIdentity,root:isGit(root)?cacheStateRoot(root):root,version,executable:realpathSync(executable),binary:hash(readFileSync(executable)),
-      policy,args,settings,globalIgnores,node:process.version,
-      environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
-  } catch { return skip('identity-unavailable'); }
+const cacheEvent=({operation,outcome,reason})=>process.stderr.write(`[nose result-cache] ${operation} ${outcome}: ${reason}\n`);
+const identitySkipped=reason=>cacheEvent({operation:'identity',outcome:'skipped',reason});
+
+// Call only for a locked, immutable tree prepared under the identity's proof
+// contract. Mutable folders always use scan() and independent source reads.
+export function committedResult(root, cacheOwner, inputIdentity) {
+  const started=performance.now();
+  const directory=cacheStateRoot(cacheOwner);
+  const inputs=scannerInputs(root,{cacheDirectory:directory,cacheOwner,managed:true});
+  const identity=inputs.identity(inputIdentity,identitySkipped);
+  const cached=identity ? readScanResult({directory,identity,onEvent:cacheEvent}) : null;
+  if (!cached || cached.noseVersion!==inputs.noseVersion
+    || JSON.stringify(identity)!==JSON.stringify(inputs.identity(inputIdentity,identitySkipped))) return null;
+  process.stderr.write(`[nose scan] verified result cache hit for ${inputIdentity.inventory}; ${cached.families.length} families\n`);
+  process.stderr.write(`[nose scan] immutable result verification finished in ${(performance.now()-started).toFixed(3)}ms\n`);
+  return cached;
 }
 
-function scannerEnvironment(root, env) {
-  // The caller has resolved repository ownership. Scanner children read the
-  // selected source directory, never an inherited hook's index or object store.
-  for (const key of ['NOSE_PLUGIN_ROOT','NOSE_PROJECT_ROOT','NOSE_REVIEW_STATE_ROOT',
-    'GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE',
-    'GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_QUARANTINE_PATH']) delete env[key];
-  if (!isGit(root)) return env;
-  // Git wrappers and hooks prepend executable paths. Run both entry points
-  // with Git's actual child environment, including for effective-config reads.
-  const script='console.log(JSON.stringify(Object.fromEntries(["PATH","GIT_EXEC_PATH","GIT_PREFIX"].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]))))';
-  const command='!'+shellQuote(process.execPath)+' -e '+shellQuote(script);
-  const probe=spawnSync('git',['-c','alias.nose-review-env='+command,'nose-review-env'],{
-    cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024,
-  });
-  if(probe.status!==0) throw new Error('Git scanner environment unavailable');
-  const effective=JSON.parse(probe.stdout);
-  for(const key of ['PATH','GIT_EXEC_PATH','GIT_PREFIX']) {
-    if(effective[key]!==undefined && typeof effective[key]!=='string') throw new Error('Invalid Git scanner environment');
-  }
-  return {...env,...Object.fromEntries(['PATH','GIT_EXEC_PATH','GIT_PREFIX'].filter(key=>effective[key]!==undefined).map(key=>[key,
-    key==='PATH' ? [...new Set(effective[key].split(delimiter))].join(delimiter) : effective[key]]))};
-}
-
-export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
+export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity, evidence) {
   const started = performance.now();
   const phaseFinished=(phase,start)=>process.stderr.write(`[nose scan] ${phase} finished in ${(performance.now()-start).toFixed(3)}ms\n`);
-  const parallelism = availableParallelism();
-  const threads = process.env.RAYON_NUM_THREADS ?? String(Math.min(2, parallelism));
-  if (!/^[1-9]\d*$/.test(threads) || !Number.isSafeInteger(Number(threads)) || Number(threads) > parallelism)
-    throw new Error(`RAYON_NUM_THREADS must be an integer from 1 to ${parallelism}`);
   const snapshotStarted=performance.now();
-  const before = snapshot(root, verifiedFiles);
+  if(evidence && (evidence.root!==realpathSync(root) || JSON.stringify(evidence.identity)!==JSON.stringify(inputIdentity)))
+    throw new Error('Archive source evidence does not match scan inputs');
+  const before = evidence?.files ?? snapshot(root, verifiedFiles);
   phaseFinished('source snapshot',snapshotStarted);
   const cacheReadStarted=performance.now();
   const cacheDirectory = cacheStateRoot(cacheOwner);
-  // Nose's detector overrides are not all exposed by --show-config. Preserve
-  // scanner, Git/config, locale and OS runtime inputs in both child and cache key.
-  const runtimeVariables=new Set(['PATH','HOME','USERPROFILE','HOMEDRIVE','HOMEPATH','LANG','LANGUAGE',
-    'TMPDIR','TMP','TEMP','SystemRoot','SYSTEMROOT','WINDIR','PATHEXT']);
-  const env=scannerEnvironment(cacheOwner,Object.fromEntries(Object.entries(process.env).filter(([key])=>
-    runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key))));
-  env.RAYON_NUM_THREADS=threads;
-  const version = spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
-  if (version.status!==0) throw new Error('Nose executable unavailable');
-  const cache = join(cacheDirectory, 'analysis-cache');
-  mkdirSync(cache,{recursive:true,mode:0o700});
-  if (lstatSync(cache).isSymbolicLink()) throw new Error('Analysis cache must not be a symlink');
+  const inputs=scannerInputs(root,{cacheDirectory,cacheOwner,managed:verifiedFiles!==undefined || isGit(root),exclusions:[...excluded]});
+  const {env,args,cache,threads,noseVersion}=inputs;
   const temporary = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
-    const exclusions=verifiedFiles !== undefined || isGit(root)?[]:[...excluded].flatMap(name=>['--exclude',name+'/']);
-    const args=['query','.','all','top=0','sort=extractability','--mode','syntax,semantic,near','--min-size','24','--cache-dir',cache,'--format','json',...exclusions];
-    const cacheEvent=({operation,outcome,reason})=>process.stderr.write(`[nose result-cache] ${operation} ${outcome}: ${reason}\n`);
-    const identitySkipped=reason=>cacheEvent({operation:'identity',outcome:'skipped',reason});
     const contentIdentity=()=>verifiedFiles === undefined ? workingIdentity(root) : inputIdentity;
     const initialIdentity=contentIdentity();
-    const identity=resultIdentity(root,args,version.stdout.trim(),initialIdentity,env,identitySkipped);
+    const identity=inputs.identity(initialIdentity,identitySkipped);
     const resultCache={directory:cacheDirectory,identity,onEvent:cacheEvent};
     const cached=identity ? readScanResult(resultCache) : null;
     phaseFinished('cache identity/read',cacheReadStarted);
     const cachedVerificationStarted=performance.now();
-    if (cached && cached.noseVersion===version.stdout.trim() && JSON.stringify(cached.files)===JSON.stringify(before)) {
+    if (cached && cached.noseVersion===noseVersion && JSON.stringify(cached.files)===JSON.stringify(before)) {
       const memberHashesForFamily=createMemberHasher(root);
       const verified=cached.families.every(family=>hash(JSON.stringify(memberHashesForFamily(family)))===family.fingerprint);
       if (verified && JSON.stringify(before)===JSON.stringify(snapshot(root,verifiedFiles))
-        && JSON.stringify(identity)===JSON.stringify(resultIdentity(root,args,version.stdout.trim(),contentIdentity(),env,identitySkipped))) {
+        && JSON.stringify(identity)===JSON.stringify(inputs.identity(contentIdentity(),identitySkipped))) {
         phaseFinished('report/source verification',cachedVerificationStarted);
         process.stderr.write(`[nose scan] verified result cache hit for ${initialIdentity}; ${cached.families.length} families\n`);
         return cached;
       }
       cacheEvent({operation:'verify',outcome:'miss',reason:verified?'source-changed-during-read':'membership-mismatch'});
     } else if (cached) {
-      cacheEvent({operation:'verify',outcome:'miss',reason:cached.noseVersion===version.stdout.trim()?'source-snapshot-mismatch':'version-mismatch'});
+      cacheEvent({operation:'verify',outcome:'miss',reason:cached.noseVersion===noseVersion?'source-snapshot-mismatch':'version-mismatch'});
     }
     if (cached) phaseFinished('report/source verification',cachedVerificationStarted);
     const reportPath=join(temporary,'report.json');
@@ -305,19 +252,11 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity) {
     const report = JSON.parse(readFileSync(reportPath,'utf8'));
     if (!Array.isArray(report.families)) throw new Error('Unsupported Nose report');
     process.stderr.write(`[nose scan] verifying ${report.families.length} families against source\n`);
-    const memberHashesForFamily = createMemberHasher(root);
-    const families = report.families.flatMap(family=>{
-      if (!Array.isArray(family?.locations)) throw new Error('Family must contain source locations.');
-      const locations=family.locations.filter(location=>location?.region !== null);
-      if (locations.length !== family.locations.length && locations.length < 2) return [];
-      const candidate=locations.length === family.locations.length ? family : {...family,locations};
-      const memberHashes=memberHashesForFamily(candidate);
-      return [{...candidate,memberHashes,fingerprint:hash(JSON.stringify(memberHashes))}];
-    });
+    const families = verifiedFamilies(report,root);
     if (JSON.stringify(before)!==JSON.stringify(snapshot(root, verifiedFiles))) throw new Error('Code changed during scan; review deferred');
-    const verifiedResult={noseVersion:version.stdout.trim(),families,files:before};
+    const verifiedResult={noseVersion,families,files:before};
     if (identity) {
-      const afterIdentity=resultIdentity(root,args,version.stdout.trim(),contentIdentity(),env,identitySkipped);
+      const afterIdentity=inputs.identity(contentIdentity(),identitySkipped);
       if (JSON.stringify(identity)!==JSON.stringify(afterIdentity)) throw new Error('Scan inputs changed during scan; review deferred');
     }
     phaseFinished('report/source verification',verificationStarted);

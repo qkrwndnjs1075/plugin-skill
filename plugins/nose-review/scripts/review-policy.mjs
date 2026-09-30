@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { containedPath, createMemberHasher, hash } from "./source-evidence.mjs";
+export { createMemberHasher, hash } from "./source-evidence.mjs";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT = /^[a-f0-9]{64}$/;
@@ -15,35 +17,6 @@ export function fingerprintFamily(family, repoRoot) {
 
 export function memberHashesForFamily(family, repoRoot) {
   return createMemberHasher(repoRoot)(family);
-}
-
-// Scope reuse to one scan; callers must verify source stability before using it.
-export function createMemberHasher(repoRoot) {
-  const root = realpathSync(repoRoot);
-  const files = new Map();
-  return family => {
-    if (!Array.isArray(family?.locations) || family.locations.length === 0) {
-      throw new Error("Family must contain source locations.");
-    }
-    return family.locations.map(({ file, start, end }) => {
-      if (typeof file !== "string" || !Number.isInteger(start)
-        || !Number.isInteger(end) || start < 1 || end < start) {
-        throw new Error("Invalid source span.");
-      }
-      let source = files.get(file);
-      if (!source) {
-        const path = containedPath(root, file);
-        const lines = readFileSync(path, "utf8").split(/\r?\n/);
-        if (lines.at(-1) === "") lines.pop();
-        source = {lines:lines.map(line=>line.trimEnd()),spans:new Map()};
-        files.set(file,source);
-      }
-      if (end > source.lines.length) throw new Error(`Source span exceeds file: ${file}`);
-      const key = `${start}:${end}`;
-      if (!source.spans.has(key)) source.spans.set(key,hash(source.lines.slice(start - 1,end).join("\n")));
-      return source.spans.get(key);
-    }).sort();
-  };
 }
 
 export function filterReviewed(families, baseline, version, currentFamilies = families) {
@@ -136,20 +109,6 @@ function validMembership(entry) {
     && hash(JSON.stringify([...entry.memberHashes].sort())) === entry.fingerprint;
 }
 
-function containedPath(root, file) {
-  const path = resolve(root, file);
-  const local = relative(root, path);
-  if (local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) {
-    throw new Error(`Source path is outside repository: ${file}`);
-  }
-  const actual = realpathSync(path);
-  const actualLocal = relative(root, actual);
-  if (actualLocal === ".." || actualLocal.startsWith(`..${sep}`) || isAbsolute(actualLocal)) {
-    throw new Error(`Source symlink is outside repository: ${file}`);
-  }
-  return actual;
-}
-
 function withBaselineLock(reviewDirectory, operation) {
   return withReviewLock(join(reviewDirectory, '.baseline.lock'), operation, 'baseline update');
 }
@@ -211,10 +170,6 @@ export function validBaseline(baseline) {
     && baseline.intentional.every((entry) => entry && typeof entry.fingerprint === "string" && FINGERPRINT.test(entry.fingerprint)
       && typeof entry.reason === "string" && entry.reason.trim().length > 0
       && (entry.memberHashes === undefined || validMembership(entry)));
-}
-
-export function hash(value) {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function main(args) {
