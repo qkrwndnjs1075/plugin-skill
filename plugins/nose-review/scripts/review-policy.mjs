@@ -30,13 +30,13 @@ export function createMemberHasher(repoRoot) {
         || !Number.isInteger(end) || start < 1 || end < start) {
         throw new Error("Invalid source span.");
       }
-      const path = containedPath(root, file);
-      let source = files.get(path);
+      let source = files.get(file);
       if (!source) {
+        const path = containedPath(root, file);
         const lines = readFileSync(path, "utf8").split(/\r?\n/);
         if (lines.at(-1) === "") lines.pop();
         source = {lines:lines.map(line=>line.trimEnd()),spans:new Map()};
-        files.set(path,source);
+        files.set(file,source);
       }
       if (end > source.lines.length) throw new Error(`Source span exceeds file: ${file}`);
       const key = `${start}:${end}`;

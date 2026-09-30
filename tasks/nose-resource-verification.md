@@ -219,3 +219,23 @@ loss in the new streaming test after its first diagnostic. The test now uses an
 ephemeral loopback socket with a readiness handshake and one acknowledgement per
 fragment. It still proves output arrives before gate exit and preserves split
 status-marker coverage, without relying on filesystem event delivery or sleeps.
+
+## Native hook and direct recovery reuse (2026-09-30)
+
+Native linked-worktree hooks supplied repository-location variables that direct recovery did not. The shared scanner owner now removes inherited Git locations and wrapper plugin/project/cache coordinates after resolving the repository and cache owner. Actual detector, Git configuration, executable, source and ignore inputs still participate in invalidation. Both push and recovery use this owner.
+
+Within one verified scan, source-path validation is reused alongside lines and span hashes. Each alias is checked independently. Archive and HEAD verification reuse one 1 MiB read buffer per tree walk; Git blob equality, source stability, membership, containment and blocking checks remain active. Monotonic diagnostics separate archive preparation/verification/cleanup from scan snapshot/cache/native execution/verification/write totals. See [the current runtime contract](../plugins/nose-review/README.md#requirements-and-limits).
+
+The native linked-worktree push -> direct recovery -> native retry regression fails against source HEAD `7c6abc548d7e37c940ddff53def72a2d6f0b4f1b` with two analyses, and passes with one analysis plus two verified result hits. A separate real CLI comparison uses the same 437-file reply subtree from Chorus `1d30351c486bd62a8857e3babae0e94d5cc78fe9`, excluding `.test.` files that contain fake secret fixtures. Recovery exports the wrapper plugin/project coordinates. Both implementations retain the same 344 blocking candidates, fingerprint digest `5316c7fd67cf2c0646b21cce14d338a285630efdbefadb559f1b8dbb0e58875a`, and passed secret checks.
+
+| Implementation | Analyses | Verified result hits | Recovery seconds | Three-step seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Previous | 2 | 1 | 0.756 | 5.739 |
+| Updated source | 1 | 2 | 0.534 | 5.279 |
+| Installed final source | 1 | 2 | 0.526 | 5.382 |
+
+These are single small-corpus observations, not full-Chorus timings or a cold-analysis speed guarantee. A focused synthetic source-path comparison used 2,200 files / 13,200 locations, five alternating pairs, and equal member-hash outputs: median 215.939ms before, 69.147ms after. This measures path/member processing only. Initial full detection and full source evidence checks remain necessary.
+
+Final checks: 167/167 Nose and package-layout tests passed, no skips, 60.564s. Regressions preserve changed-source/config/binary/detector invalidation, secrets, tamper rejection, ignored tracked files, aliases, membership growth and original-hook behavior. Fresh code review approved with no blockers; its WATCH notes concern pre-existing module size and evidence scope. Node syntax and whitespace checks passed. Editor LSP remains unavailable because the JavaScript workspace has no TypeScript installation; executable checks supplied proof.
+
+Installed Nose Review 0.6.1 matches the final source. The active Chorus and plugin-skill payload is `3f8f9c4431e6939280e6`; module hashes match, installer re-run reports `current`, and both actual no-ref native-hook smoke checks exit 0. The installed real CLI scenario above also passed. Runtime SHA-256 is `4d0274fbdc2e5c045fca5f9f09c64603b7ff2fd83b45abcca6297912fcfcd6c5`. Original installed files remain recoverable at `/Users/park/.codex/backups/nose-review-latency-20260930.2netpq/original.tar.gz`. Temporary QA fixtures and review artifacts are removed after this record; unrelated dirty work is preserved. No upstream Nose, commit, push or public release is included.

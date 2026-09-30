@@ -55,6 +55,25 @@ test("fingerprint survives file moves, line shifts, member reorder and trailing 
   assert.equal(hash(JSON.stringify(memberHashesForFamily(moved, root))), expected);
 });
 
+test("one scan preserves spans and duplicate members across source path aliases", (t) => {
+  const { root } = fixture(t);
+  symlinkSync("a.js", join(root, "alias.js"));
+  const members = policy.createMemberHasher(root);
+  const family = { locations: ["a.js", "./a.js", "alias.js", fs.realpathSync(join(root, "a.js"))]
+    .map(file => ({ file, start: 1, end: 2 })) };
+  const expected = Array(4).fill(hash("const value = 1;\nreturn value;"));
+  assert.deepEqual(members(family), expected);
+  assert.deepEqual(members({ locations: [{ file: "alias.js", start: 2, end: 2 }] }), [hash("return value;")]);
+});
+
+test("a cached source does not exempt an outside path alias from containment checks", (t) => {
+  const { directory, root, family } = fixture(t);
+  symlinkSync(join(root, "a.js"), join(directory, "outside-alias.js"));
+  const members = policy.createMemberHasher(root);
+  members(family);
+  assert.throws(() => members({ locations: [{ file: "../outside-alias.js", start: 1, end: 2 }] }), /outside repository/);
+});
+
 test("fingerprint preserves internal whitespace inside strings", (t) => {
   const { root, family } = fixture(t);
   writeFileSync(join(root, "b.js"), "const value = 'a  b';\nreturn value;\n");

@@ -224,7 +224,7 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   `nose cache clear` with `--dir` pointing to the printed directory when
   inspection or reclamation is needed. Cached analysis never records approval.
   Cold scans can take longer with fewer workers; unchanged reruns benefit most.
-  Source lines and span hashes are reused only within a scan, whose final source
+  Source paths, lines and span hashes are reused only within a scan, whose final source
   snapshot must still match. Manual acceptance always starts a fresh reader.
 - Linked worktrees share the cache through their canonical Git common directory.
   Archive scans share a locked extraction path; editing-session registries remain
@@ -244,8 +244,14 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   shell variables reach neither the scanner nor the cache key. Environment values
   are not written to the cache. Custom scanner wrappers cannot rely on unrelated
   caller variables.
-  Git-managed scans resolve Git's child search path before launching Nose, so
-  direct review and installed hooks use the same environment and cache identity.
+  Wrapper plugin/project/cache-location variables reach neither the scanner nor
+  its environment digest; the cache owner and directory remain explicit inputs.
+  Repository ownership is resolved before scanner children start. Inherited Git
+  repository-location variables are removed from the child environment; the
+  selected source directory owns discovery. Git-managed scans resolve Git's child
+  search path, while detector and Git configuration inputs remain part of the
+  identity. Native hooks and direct recovery therefore share unchanged results,
+  including in linked worktrees.
   Working-folder identities include tracked and visible untracked file contents,
   file membership, nested/ancestor ignore controls and Git's local exclude file.
   Source and effective inputs are revalidated before a cached result is returned.
@@ -285,6 +291,12 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   they occur. Membership comparison indexes only hashes present in candidates,
   then checks related families with the same multiplicity-preserving rules.
   A failure/timeout blocks and is reported.
+  Millisecond phase durations use a monotonic clock: `[nose archive]` reports
+  extraction, Git-source verification, cleanup and total time; `[nose scan]`
+  reports source snapshot, cache identity/read, native execution, report/source
+  verification, result write and total time. The legacy `scanner finished`
+  marker measures native execution only. Scan totals include the initial source
+  snapshot and result writes; archive totals also include lock wait and cleanup.
 - An older open Codex session may still have old prompt hooks. Restart it.
   If a legacy registration remains after all old sessions have stopped, use
   `node scripts/nose-review.mjs reset-state /path/to/project --confirm-idle`.

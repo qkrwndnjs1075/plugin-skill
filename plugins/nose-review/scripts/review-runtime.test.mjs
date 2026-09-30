@@ -205,3 +205,82 @@ test('CommonJS and short HTML sources stay in verified snapshots and reused resu
   assert.ok(logs.some(line=>line.includes('[nose result-cache] write stored:')));
   assert.ok(logs.some(line=>line.includes('[nose result-cache] read hit:')));
 });
+
+test('wrapper and hook location variables reuse direct scan results without leaking into the scanner',t=>{
+  const logs=[];
+  t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
+  const fixture=mkdtempSync(join(tmpdir(),'nose-hook-context-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const owner=join(fixture,'repo'),root=join(fixture,'snapshot'),bin=join(fixture,'bin'),calls=join(fixture,'queries');
+  for(const directory of [owner,root,bin]) mkdirSync(directory);
+  execFileSync('git',['init','-q'],{cwd:owner});
+  writeFileSync(join(root,'a.js'),'export const a=1;\n');
+  const locations={NOSE_PLUGIN_ROOT:bin,NOSE_PROJECT_ROOT:owner,
+    GIT_DIR:join(owner,'.git'),GIT_COMMON_DIR:join(owner,'.git'),GIT_WORK_TREE:owner,
+    GIT_INDEX_FILE:join(owner,'.git','index'),GIT_OBJECT_DIRECTORY:join(owner,'.git','objects'),
+    GIT_ALTERNATE_OBJECT_DIRECTORIES:join(owner,'.git','objects'),GIT_QUARANTINE_PATH:join(owner,'.git','objects')};
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
+    const fs=require('node:fs');
+    if(process.argv.includes('--version')) console.log('nose fixture');
+    else if(process.argv.includes('--show-config')) console.log(JSON.stringify({schema:'nose.query-config/v1',
+      config_file:null,query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
+    else {
+      fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(Object.fromEntries(
+        ${JSON.stringify([...Object.keys(locations),'NOSE_REVIEW_STATE_ROOT'])}.filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]])))+'\\n');
+      console.log(JSON.stringify({families:[]}));
+    }
+  `,{mode:0o700});
+  const previous=Object.fromEntries(['PATH','NOSE_REVIEW_STATE_ROOT','GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0',...Object.keys(locations)].map(key=>[key,process.env[key]]));
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  for(const key of Object.keys(previous)) if(key!=='PATH') delete process.env[key];
+  Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
+  const run=()=>scan(root,['a.js'],owner,'hook-context-content');
+  const first=run();
+  for(const [key,value] of Object.entries(locations)) {
+    process.env[key]=value;
+    assert.deepEqual(run(),first);
+    assert.equal(countRecordedCalls(calls),1,`${key} must not rerun an unchanged scanner`);
+    delete process.env[key];
+  }
+  Object.assign(process.env,locations);
+  writeFileSync(join(root,'a.js'),'export const a=2;\n');
+  run();
+  assert.deepEqual(readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse),[{},{}],
+    'a cache miss must also remove inherited repository locations from the scanner');
+  Object.assign(process.env,{GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'core.ignorecase',GIT_CONFIG_VALUE_0:'true'});
+  run();assert.equal(countRecordedCalls(calls),3,'Git configuration must remain part of cache identity');
+  assert.ok(logs.some(line=>line.includes('verified result cache hit')));
+});
+
+test('scan phase timings include source snapshot, cache write and total duration',t=>{
+  const logs=[];
+  t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
+  const fixture=mkdtempSync(join(tmpdir(),'nose-scan-timing-'));
+  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const root=join(fixture,'repo'),bin=join(fixture,'bin');
+  mkdirSync(root);mkdirSync(bin);writeFileSync(join(root,'a.js'),'export const a=1;\n');
+  writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
+    if(process.argv.includes('--version')) console.log('nose fixture');
+    else if(process.argv.includes('--show-config')) console.log(JSON.stringify({schema:'nose.query-config/v1',
+      config_file:null,query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
+    else console.log(JSON.stringify({families:[]}));
+  `,{mode:0o700});
+  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT};
+  Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
+  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const run=()=>scan(root,['a.js'],root,'timing-content');
+  run();
+  const phases=['source snapshot','cache identity/read','native execution','report/source verification','result write','total'];
+  const durations=phases.map(phase=>{
+    const line=logs.find(line=>line.startsWith(`[nose scan] ${phase} finished in `));
+    assert.ok(line,`missing ${phase} timing`);
+    return Number(line.match(/finished in ([\d.]+)ms/)[1]);
+  });
+  assert.ok(durations.at(-1)>=durations.slice(0,-1).reduce((sum,value)=>sum+value,0)-1,
+    'total must cover every phase including initial snapshot and cache write');
+  assert.equal((logs.join('').match(/scanner finished/g)??[]).length,1,
+    'detailed phase timings must preserve the existing scanner invocation marker');
+  logs.length=0;run();
+  assert.ok(logs.some(line=>line.includes('total finished in ')),'cache hits must report total time');
+  assert.ok(!logs.some(line=>line.includes('native execution finished in ')),'cache hits must not claim native execution');
+});

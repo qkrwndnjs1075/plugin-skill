@@ -13,11 +13,10 @@ function blobDigest(content, algorithm) {
   return createHash(algorithm).update(`blob ${content.length}\0`).update(content).digest('hex');
 }
 
-function fileDigest(path, algorithm) {
+function fileDigest(path, algorithm, buffer) {
   const size = statSync(path).size;
   const digest = createHash(algorithm).update(`blob ${size}\0`);
   const descriptor = openSync(path, 'r');
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
   let position = 0;
   try {
     while (position < size) {
@@ -33,11 +32,17 @@ function fileDigest(path, algorithm) {
 }
 
 export function archivedScan(root, sha, operation, materializeSymlinks=false) {
+  const started=performance.now();
   const state = cacheStateRoot(root);
-  return withReviewLock(join(state, 'snapshot.lock'), () => scanArchive(root, sha, operation, materializeSymlinks, state), 'snapshot scan', scanTimeoutMs + 60_000);
+  try {
+    return withReviewLock(join(state, 'snapshot.lock'), () => scanArchive(root, sha, operation, materializeSymlinks, state), 'snapshot scan', scanTimeoutMs + 60_000);
+  } finally {
+    process.stderr.write(`[nose archive] total finished in ${(performance.now()-started).toFixed(3)}ms\n`);
+  }
 }
 
 function scanArchive(root, sha, operation, materializeSymlinks, state) {
+  const started=performance.now();
   git(root, ['cat-file', '-e', `${sha}^{commit}`]);
   // Nose keys workspace generations by canonical source root, not cache path.
   const directory = join(state, 'snapshot');
@@ -57,7 +62,10 @@ function scanArchive(root, sha, operation, materializeSymlinks, state) {
     if (entries.length > maxTreeEntries) throw new Error(`Commit exceeds ${maxTreeEntries} tree entries`);
     const objectFormat = git(root, ['rev-parse', '--show-object-format']).trim();
     if (!['sha1', 'sha256'].includes(objectFormat)) throw new Error('Unsupported Git object format');
+    const verificationStarted=performance.now();
+    process.stderr.write(`[nose archive] extraction finished in ${(verificationStarted-started).toFixed(3)}ms\n`);
     const verificationDeadline = Date.now() + 120000;
+    const buffer=Buffer.allocUnsafe(1024 * 1024);
     for (const entry of entries) {
       if (Date.now() > verificationDeadline) throw new Error('Commit archive verification exceeded 120 seconds');
       const [metadata, file] = entry.split(/\t(.*)/s);
@@ -76,10 +84,11 @@ function scanArchive(root, sha, operation, materializeSymlinks, state) {
         continue;
       }
       if (!lstatSync(path, {throwIfNoEntry:false})?.isFile()
-        || fileDigest(path, objectFormat) !== object) {
+        || fileDigest(path, objectFormat, buffer) !== object) {
         throw new Error(`Archive differs from pushed tree: ${file}`);
       }
     }
+    process.stderr.write(`[nose archive] source verification finished in ${(performance.now()-verificationStarted).toFixed(3)}ms\n`);
     if(!materializeSymlinks) {
       // Git ignore files govern untracked discovery, not coverage of the pushed tree.
       for(const entry of entries) {
@@ -89,8 +98,10 @@ function scanArchive(root, sha, operation, materializeSymlinks, state) {
     }
     return operation(directory, entries.map(entry => entry.split(/\t(.*)/s)[1]), hash(entries.join('\0')));
   } finally {
+    const cleanupStarted=performance.now();
     rmSync(directory, {recursive:true, force:true});
     rmSync(archiveDirectory, {recursive:true, force:true});
+    process.stderr.write(`[nose archive] cleanup finished in ${(performance.now()-cleanupStarted).toFixed(3)}ms\n`);
   }
 }
 
@@ -105,6 +116,7 @@ export function relativeFamilies(families, directory) {
 // Only raw-byte-equivalent work can use committed discovery. Git's clean
 // status alone can hide filters and assume-unchanged files.
 export function equivalentHead(root) {
+  const started=performance.now();
   try {
     const sha=git(root,['rev-parse','--verify','HEAD^{commit}']).trim();
     if(git(root,['diff','--cached','--name-only',sha,'--']).trim()) return null;
@@ -115,6 +127,7 @@ export function equivalentHead(root) {
     const tracked=new Set(entries.map(entry=>entry.split(/\t(.*)/s)[1]));
     const algorithm=git(root,['rev-parse','--show-object-format']).trim();
     if(!['sha1','sha256'].includes(algorithm)) return null;
+    const buffer=Buffer.allocUnsafe(1024 * 1024);
     for(const entry of entries) {
       const [metadata,file]=entry.split(/\t(.*)/s);
       const [mode,type,object]=metadata.split(' ');
@@ -126,8 +139,11 @@ export function equivalentHead(root) {
         if(target==='..' || target.startsWith(`..${sep}`) || isAbsolute(target)) return null;
         const normalized=target.split(sep).join('/');
         if(!tracked.has(normalized) && ![...tracked].some(file=>file.startsWith(normalized+'/'))) return null;
-      } else if(!stat?.isFile() || fileDigest(path,algorithm)!==object) return null;
+      } else if(!stat?.isFile() || fileDigest(path,algorithm,buffer)!==object) return null;
     }
     return sha;
   } catch { return null; }
+  finally {
+    process.stderr.write(`[nose archive] working-tree verification finished in ${(performance.now()-started).toFixed(3)}ms\n`);
+  }
 }

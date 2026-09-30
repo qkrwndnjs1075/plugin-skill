@@ -33,8 +33,11 @@ test('skill scan permits its own session and preserves registration, but refuses
   }
 });
 
-for (const change of ['clean','installed-clean','modified','added','deleted','ignored-untracked','assume-unchanged','staged','crlf','internal-link']) test(`fix scan followed by pre-push preserves commit coverage with ${change} working inputs`, t=>{
-  const {root,git}=gitFixture(t,'nose-fix-reuse-');
+for (const change of ['clean','installed-clean','installed-linked-clean','modified','added','deleted','ignored-untracked','assume-unchanged','staged','crlf','internal-link']) test(`fix scan followed by pre-push preserves commit coverage with ${change} working inputs`, t=>{
+  const fixture=gitFixture(t,'nose-fix-reuse-');
+  const {git}=fixture;
+  let {root}=fixture;
+  const installed=change.startsWith('installed-');
   writeFileSync(join(root,'a.js'),source('alpha'));
   writeFileSync(join(root,'b.js'),source('beta'));
   writeFileSync(join(root,'.gitignore'),'b.js\nignored.js\n.nose-review/\n');
@@ -49,22 +52,30 @@ for (const change of ['clean','installed-clean','modified','added','deleted','ig
   if(change==='ignored-untracked') writeFileSync(join(root,'ignored.js'),source('gamma'));
   const env={...process.env,NOSE_REVIEW_STATE_ROOT:mkdtempSync(join(tmpdir(),'nose-fix-cache-'))};
   t.after(()=>rmSync(env.NOSE_REVIEW_STATE_ROOT,{recursive:true,force:true}));
-  if(change==='installed-clean') {
+  if(change==='installed-linked-clean') {
+    root=join(env.NOSE_REVIEW_STATE_ROOT,'linked');
+    git('worktree','add','--detach',root,'HEAD');
+  }
+  if(installed) {
     const remote=join(env.NOSE_REVIEW_STATE_ROOT,'remote.git');
     git('init','--bare','-q',remote);git('remote','add','origin',remote);install(root);
   }
+  const nativePush=()=>spawnSync('git',['push','origin','HEAD:refs/heads/main'],{cwd:root,encoding:'utf8',env});
+  const initialPush=change==='installed-linked-clean' ? nativePush() : null;
+  if(initialPush) assert.equal(initialPush.status,1,initialPush.stderr);
   const fix=spawnSync(process.execPath,[new URL('./nose-fix-scan.mjs',import.meta.url).pathname,root],{encoding:'utf8',env});
   assert.equal(fix.status,0,fix.stderr);
   if(change==='crlf') git('config','core.autocrlf','false');
   const report=JSON.parse(readFileSync(join(root,'.nose-review/report.json'),'utf8'));
-  const push=change==='installed-clean' ? spawnSync('git',['push','origin','HEAD:refs/heads/main'],{cwd:root,encoding:'utf8',env}) : spawnSync(process.execPath,[new URL('./nose-pre-push.mjs',import.meta.url).pathname,'origin','fixture'],{cwd:root,encoding:'utf8',env,input:`refs/heads/main ${git('rev-parse','HEAD')} refs/heads/main ${'0'.repeat(40)}\n`});
+  const push=installed ? nativePush() : spawnSync(process.execPath,[new URL('./nose-pre-push.mjs',import.meta.url).pathname,'origin','fixture'],{cwd:root,encoding:'utf8',env,input:`refs/heads/main ${git('rev-parse','HEAD')} refs/heads/main ${'0'.repeat(40)}\n`});
   assert.equal(push.status,1,push.stderr);
   const pushed=JSON.parse(readFileSync(join(root,'.nose-review/report.json'),'utf8'));
   assert.ok(pushed.candidates.some(family=>family.locations.some(location=>location.file==='b.js')));
-  if(['clean','installed-clean','ignored-untracked','internal-link'].includes(change)) {
+  if(['clean','installed-clean','installed-linked-clean','ignored-untracked','internal-link'].includes(change)) {
     assert.ok(report.candidates.some(family=>family.locations.some(location=>location.file==='b.js')));
     assert.ok(report.candidates.every(family=>family.locations.every(location=>!location.file.startsWith('/'))));
-    assert.equal(((fix.stderr+push.stderr).match(/scanner finished/g)??[]).length,1);
+    assert.equal((((initialPush?.stderr??'')+fix.stderr+push.stderr).match(/scanner finished/g)??[]).length,1);
+    if(initialPush) assert.match(fix.stderr,/verified result cache hit/);
     assert.match(push.stderr,/verified result cache hit/);
   } else {
     assert.equal(((fix.stderr+push.stderr).match(/scanner finished/g)??[]).length,2);
