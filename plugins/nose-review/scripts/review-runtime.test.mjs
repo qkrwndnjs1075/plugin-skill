@@ -83,7 +83,7 @@ test('scan accepts valid Nose JSON larger than the child-process output buffer',
   finally { process.env.PATH=previous; }
 });
 
-test('scans bound workers and reuse the project cache across temporary snapshots', t=>{
+test('scans leave worker defaults to Nose, pass overrides unchanged and reuse the project cache', t=>{
   const fixture=mkdtempSync(join(tmpdir(),'nose-resources-'));
   t.after(()=>rmSync(fixture,{recursive:true,force:true}));
   const bin=join(fixture,'bin'),owner=join(fixture,'owner');
@@ -96,7 +96,7 @@ test('scans bound workers and reuse the project cache across temporary snapshots
       const args=process.argv.slice(2),cache=args[args.indexOf('--cache-dir')+1];
       fs.mkdirSync(cache,{recursive:true});
       const marker=path.join(cache,'cache-marker');
-      fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({threads:process.env.RAYON_NUM_THREADS,cache,hit:fs.existsSync(marker),args})+'\\n');
+      fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify({threads:process.env.RAYON_NUM_THREADS??null,cache,hit:fs.existsSync(marker),args})+'\\n');
       fs.writeFileSync(marker,'cached analysis');
       console.log(JSON.stringify({families:[]}));
     }
@@ -109,21 +109,19 @@ test('scans bound workers and reuse the project cache across temporary snapshots
     scan(root,['app.js'],owner);
   }
   const rows=readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(rows[0].threads,String(Math.min(2,availableParallelism())));
+  assert.equal(rows[0].threads,null,'the scanner must receive no wrapper-selected worker count');
+  assert.equal(rows[1].threads,null);
   assert.equal(rows[1].cache,rows[0].cache);
   assert.equal(rows[0].hit,false);assert.equal(rows[1].hit,true);
   assert.ok(existsSync(rows[0].cache));
   assert.ok(rows[0].args.includes('syntax,semantic,near'));
   assert.equal(process.env.RAYON_NUM_THREADS,undefined);
-  process.env.RAYON_NUM_THREADS='1';scan(owner);
-  const last=JSON.parse(readFileSync(calls,'utf8').trim().split('\n').at(-1));
-  assert.equal(last.threads,'1');
-  const count=readFileSync(calls,'utf8');
-  for(const invalid of ['0','auto','-1','1.5','',String(availableParallelism()+1)]) {
-    process.env.RAYON_NUM_THREADS=invalid;
-    assert.throws(()=>scan(owner),/RAYON_NUM_THREADS/);
+  for(const override of ['1','0',String(availableParallelism()+1),'auto','']) {
+    process.env.RAYON_NUM_THREADS=override;
+    scan(owner);
+    const last=JSON.parse(readFileSync(calls,'utf8').trim().split('\n').at(-1));
+    assert.equal(last.threads,override,'Rayon owns interpretation, including automatic and oversubscribed settings');
   }
-  assert.equal(readFileSync(calls,'utf8'),count);
 });
 
 test('verified content results reuse across sessions but invalidate tool, environment, config and source changes',t=>{

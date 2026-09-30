@@ -1,7 +1,7 @@
 import {spawnSync} from 'node:child_process';
 import {accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync} from 'node:fs';
 import {delimiter, dirname, join, resolve} from 'node:path';
-import {availableParallelism, homedir} from 'node:os';
+import {homedir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {hash} from './source-evidence.mjs';
 
@@ -47,15 +47,11 @@ function globalIgnoreInputs(root, env) {
 // The identity follows native inputs and source-proof semantics. Review policy,
 // hook orchestration, and progress logging are applied after retrieving evidence.
 export function scannerInputs(root, {cacheDirectory, cacheOwner, managed, exclusions=[]}) {
-  const parallelism=availableParallelism();
-  const threads=process.env.RAYON_NUM_THREADS ?? String(Math.min(2,parallelism));
-  if (!/^[1-9]\d*$/.test(threads) || !Number.isSafeInteger(Number(threads)) || Number(threads)>parallelism)
-    throw new Error(`RAYON_NUM_THREADS must be an integer from 1 to ${parallelism}`);
   const runtimeVariables=new Set(['PATH','HOME','USERPROFILE','HOMEDRIVE','HOMEPATH','LANG','LANGUAGE',
     'TMPDIR','TMP','TEMP','SystemRoot','SYSTEMROOT','WINDIR','PATHEXT']);
   const env=scannerEnvironment(cacheOwner,Object.fromEntries(Object.entries(process.env).filter(([key])=>
     runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key))));
-  env.RAYON_NUM_THREADS=threads;
+  const threads=env.RAYON_NUM_THREADS ?? 'native default';
   const version=spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
   if(version.status!==0) throw new Error('Nose executable unavailable');
   const cache=join(cacheDirectory,'analysis-cache');

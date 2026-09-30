@@ -215,10 +215,10 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
 - Node.js 20+, Nose and Gitleaks on PATH (tested with Nose 0.21.0 and Gitleaks 8.29.1).
   Gitleaks is a prerequisite, not silently installed by SessionStart.
 - Git and tar for pre-push commit snapshots. No Git is required for manual folder scans.
-- Shared scans default to two Rayon workers (one on a single-CPU host). Set
-  `RAYON_NUM_THREADS` to a positive integer up to available parallelism to choose
-  another budget. Invalid values fail before scanning. This bounds worker
-  concurrency, not total OS CPU percentage; it does not throttle unrelated tools.
+- Shared scans use Nose's native Rayon worker selection. Without
+  `RAYON_NUM_THREADS`, Nose selects its default, currently the logical CPU count.
+  Explicit Rayon settings are passed unchanged; Nose/Rayon owns interpretation,
+  including automatic selection and counts above available parallelism.
 - Analysis cache persists under the repository's shared runtime state directory, in
   `analysis-cache`; each scan prints its path. Nose owns content/configuration
   invalidation and its default 5 GiB storage budget. Use `nose cache status` or
@@ -296,7 +296,7 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
   limit per scan. The dispatcher derives its budget from the same scan limit:
   two scans plus 60 seconds per pushed ref (1,260 seconds), multiplied by the ref count.
   Manual recovery and pushed snapshots use the same budget. Scans report source count,
-  worker budget, cache path, scanner completion, source-verification phase and family
+  worker setting, cache path, scanner completion, source-verification phase and family
   count on stderr. Push diagnostics distinguish the local tree, remote comparison
   tree and membership-comparison duration, and stream through the dispatcher as
   they occur. Membership comparison indexes only hashes present in candidates,

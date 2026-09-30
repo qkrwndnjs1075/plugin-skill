@@ -230,7 +230,7 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity, evid
     let result;
     let scannerStarted;
     try {
-      process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; workers ${threads}; reusable cache ${cache}; budget ${scanTimeoutMs / 1000}s\n`);
+      process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; worker setting ${threads}; reusable cache ${cache}; budget ${scanTimeoutMs / 1000}s\n`);
       scannerStarted=performance.now();
       result = spawnSync('nose',args,{
         cwd:root,
