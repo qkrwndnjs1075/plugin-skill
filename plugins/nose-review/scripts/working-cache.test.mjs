@@ -4,7 +4,7 @@ import {mkdirSync, writeFileSync, rmSync, symlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {scan, stateRoot, cacheStateRoot} from './review-runtime.mjs';
-import {gitFixture, countRecordedCalls} from './test-helpers.mjs';
+import {gitFixture, countRecordedCalls, preserveEnvironment} from './test-helpers.mjs';
 
 function fixture(t) {
   const {root,directory,git}=gitFixture(t,'nose-working-cache-',{subdirectory:'repo'});
@@ -25,9 +25,8 @@ function fixture(t) {
     }
   `,{mode:0o700});
   const keys=['PATH','NOSE_REVIEW_STATE_ROOT','NOSE_TEST_MUTATE'];
-  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  preserveEnvironment(t,keys);
   Object.assign(process.env,{PATH:bin+':'+process.env.PATH,NOSE_REVIEW_STATE_ROOT:join(directory,'state')});
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const count=countRecordedCalls.bind(null,calls);
   return {root,directory,git,count};
 }

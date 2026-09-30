@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, linkSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readScanResult, writeScanResult } from './scan-result-cache.mjs';
+import {testDirectory} from './test-helpers.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const identity = {commit: 'a'.repeat(40), scanner: {version: 'nose 1', binary: hash('binary')}, policy: hash('policy'), environment: hash('env')};
@@ -12,8 +12,7 @@ const memberHashes = [hash('source')];
 const result = {noseVersion: 'nose 1', files: {'src/a.js': hash('source')}, families: [{locations: [{file: 'src/a.js', start: 1, end: 2}], memberHashes, fingerprint: hash(JSON.stringify(memberHashes)), retained: {metadata: true}}]};
 
 function fixture(t) {
-  const directory = mkdtempSync(join(tmpdir(), 'nose-result-cache-'));
-  t.after(() => rmSync(directory, {recursive: true, force: true}));
+  const directory = testDirectory(t, 'nose-result-cache-');
   return {directory, identity, result};
 }
 function entry(options) {

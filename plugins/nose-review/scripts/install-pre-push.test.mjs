@@ -1,17 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, statSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { install, payloadSources } from './install-pre-push.mjs';
 import { refTimeoutMs, scanTimeoutMs } from './review-runtime.mjs';
+import {testDirectory} from './test-helpers.mjs';
 
 function fixture(t) {
-  const temp=mkdtempSync(join(tmpdir(),"nose-install ' "));
-  t.after(()=>rmSync(temp,{recursive:true,force:true}));
+  const temp=testDirectory(t,"nose-install ' ");
   const repo=join(temp,'repo'),source=join(temp,'payload');
   mkdirSync(repo);mkdirSync(source);
   execFileSync('git',['init','-q'],{cwd:repo});

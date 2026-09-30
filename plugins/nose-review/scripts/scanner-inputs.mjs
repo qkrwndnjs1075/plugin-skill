@@ -5,7 +5,7 @@ import {homedir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {hash} from './source-evidence.mjs';
 
-const isGit=root=>existsSync(join(root,'.git'));
+export const isGit=root=>existsSync(join(root,'.git'));
 export const shellQuote = text => "'" + text.replaceAll("'", "'\"'\"'") + "'";
 
 function scannerEnvironment(root, env) {

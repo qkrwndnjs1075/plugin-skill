@@ -8,7 +8,7 @@ import {payloadSources} from './install-pre-push.mjs';
 import {archivedScan, scanCommit} from './verified-archive.mjs';
 import {commitTree} from './commit-inputs.mjs';
 import {cacheStateRoot, scan, shellQuote, snapshot} from './review-runtime.mjs';
-import {commitAll, gitFixture} from './test-helpers.mjs';
+import {commitAll, gitFixture, preserveEnvironment} from './test-helpers.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -36,15 +36,9 @@ function fixture(t) {
         locations:['a.js', 'b.js'].map(file => ({file, start:1, end:1}))}]}));
     }
   `, {mode:0o700});
-  const previous = {PATH:process.env.PATH, NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT};
+  preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT']);
   process.env.PATH = bin+':'+process.env.PATH;
   process.env.NOSE_REVIEW_STATE_ROOT = join(directory, 'state');
-  t.after(() => {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  });
   writeFileSync(join(root, 'a.js'), 'export const a = 1;\n');
   writeFileSync(join(root, 'b.js'), 'export const b = 1;\n');
   const sha = commitAll(git);
@@ -111,13 +105,8 @@ test('native global ignores invalidate reuse even when Git reads a different glo
   writeFileSync(join(home,'.gitconfig'),`[core]\nexcludesFile = ${ignore}\n`);
   writeFileSync(override,'');
   writeFileSync(ignore,'generated.js\n');
-  const previous={HOME:process.env.HOME,GIT_CONFIG_GLOBAL:process.env.GIT_CONFIG_GLOBAL};
+  preserveEnvironment(t,['HOME','GIT_CONFIG_GLOBAL']);
   Object.assign(process.env,{HOME:home,GIT_CONFIG_GLOBAL:override});
-  t.after(()=>{
-    for(const [key,value] of Object.entries(previous)) {
-      if(value===undefined) delete process.env[key]; else process.env[key]=value;
-    }
-  });
   assert.equal(execFileSync('git',['config','--global','--list'],{cwd:root,encoding:'utf8'}),'');
   const first=scanCommit(root,sha);
   assert.deepEqual(scanCommit(root,sha),first);

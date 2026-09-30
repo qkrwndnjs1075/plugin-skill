@@ -14,9 +14,24 @@ export const duplicateSource = name => `export function ${name}(items) {
   return result.sort((a, b) => a.value - b.value);
 }\n`;
 
-export function gitFixture(t, prefix, {subdirectory} = {}) {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+export function testDirectory(t, prefix) {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(directory, {recursive:true, force:true}));
+  return directory;
+}
+
+export function preserveEnvironment(t, keys) {
+  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
+  t.after(()=>{
+    for(const [key,value] of Object.entries(previous)) {
+      if(value===undefined) delete process.env[key]; else process.env[key]=value;
+    }
+  });
+  return previous;
+}
+
+export function gitFixture(t, prefix, {subdirectory} = {}) {
+  const directory = realpathSync(testDirectory(t, prefix));
   const root = subdirectory ? join(directory, subdirectory) : directory;
   if (subdirectory) mkdirSync(root);
   const git = (...args) => execFileSync('git', args, {cwd:root, encoding:'utf8'}).trim();

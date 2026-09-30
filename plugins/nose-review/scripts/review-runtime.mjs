@@ -4,7 +4,7 @@ import { join, dirname, parse, resolve } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { createMemberHasher, hash, isSourceFile, verifiedFamilies } from './source-evidence.mjs';
 import { readScanResult, writeScanResult } from './scan-result-cache.mjs';
-import { scannerInputs } from './scanner-inputs.mjs';
+import { isGit, scannerInputs } from './scanner-inputs.mjs';
 export { hash } from './source-evidence.mjs';
 export { shellQuote } from './scanner-inputs.mjs';
 
@@ -25,9 +25,6 @@ export function projectRoot(cwd) {
     if(root===parse(root).root || root===realpathSync(homedir())) throw new Error('Choose a project folder, not the home or filesystem root');
     return root;
   }
-}
-function isGit(root) {
-  return existsSync(join(root,'.git'));
 }
 function plainFiles(root) {
   const files=[];

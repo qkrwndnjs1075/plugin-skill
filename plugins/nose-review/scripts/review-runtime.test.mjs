@@ -1,15 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
-import { tmpdir, homedir, availableParallelism } from 'node:os';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
+import { homedir, availableParallelism } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { scan, projectRoot, snapshot } from './review-runtime.mjs';
-import { countRecordedCalls } from './test-helpers.mjs';
+import { countRecordedCalls, preserveEnvironment, testDirectory } from './test-helpers.mjs';
 
 test('plain folders exclude dependencies, build output and symlinks and enforce size limits', t=>{
-  const root=mkdtempSync(join(tmpdir(),'nose-plain-'));
-  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const root=testDirectory(t,'nose-plain-');
   writeFileSync(join(root,'app.js'),'export const a = 1;');
   for(const name of ['node_modules','dist','.venv','.nose-review']) {
     mkdirSync(join(root,name));
@@ -32,8 +31,7 @@ test('plain home and filesystem roots are rejected',()=>{
 });
 
 test('scan discards a result when source changes during Nose execution', t=>{
-  const fixture=mkdtempSync(join(tmpdir(),'nose-race-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-race-');
   const repo=join(fixture,'repo');
   const bin=join(fixture,'bin');
   mkdirSync(repo); mkdirSync(bin);
@@ -51,8 +49,7 @@ test('scan discards a result when source changes during Nose execution', t=>{
 });
 
 test('scan ignores an ungrounded Nose location whose span exceeds its file', t=>{
-  const fixture=mkdtempSync(join(tmpdir(),'nose-invalid-span-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-invalid-span-');
   const repo=join(fixture,'repo'),bin=join(fixture,'bin');
   mkdirSync(repo);mkdirSync(bin);execFileSync('git',['init','-q'],{cwd:repo});
   writeFileSync(join(repo,'long.py'),Array.from({length:304},(_,i)=>`long_${i}`).join('\n')+'\n');
@@ -70,8 +67,7 @@ test('scan ignores an ungrounded Nose location whose span exceeds its file', t=>
 });
 
 test('scan accepts valid Nose JSON larger than the child-process output buffer', t=>{
-  const fixture=mkdtempSync(join(tmpdir(),'nose-large-report-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-large-report-');
   const repo=join(fixture,'repo'),bin=join(fixture,'bin');
   mkdirSync(repo);mkdirSync(bin);execFileSync('git',['init','-q'],{cwd:repo});
   writeFileSync(join(repo,'app.js'),'export const answer = 42;\n');
@@ -84,8 +80,7 @@ test('scan accepts valid Nose JSON larger than the child-process output buffer',
 });
 
 test('scans leave worker defaults to Nose, pass overrides unchanged and reuse the project cache', t=>{
-  const fixture=mkdtempSync(join(tmpdir(),'nose-resources-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-resources-');
   const bin=join(fixture,'bin'),owner=join(fixture,'owner');
   mkdirSync(bin);mkdirSync(owner);
   const calls=join(fixture,'calls.jsonl');
@@ -101,9 +96,8 @@ test('scans leave worker defaults to Nose, pass overrides unchanged and reuse th
       console.log(JSON.stringify({families:[]}));
     }
   `,{mode:0o700});
-  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT,RAYON_NUM_THREADS:process.env.RAYON_NUM_THREADS};
+  const previous=preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT','RAYON_NUM_THREADS']);
   process.env.PATH=bin+':'+previous.PATH;process.env.NOSE_REVIEW_STATE_ROOT=join(fixture,'state');delete process.env.RAYON_NUM_THREADS;
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   for(const name of ['snapshot1','snapshot2']) {
     const root=join(fixture,name);mkdirSync(root);writeFileSync(join(root,'app.js'),'const x=1;\n');
     scan(root,['app.js'],owner);
@@ -127,8 +121,7 @@ test('scans leave worker defaults to Nose, pass overrides unchanged and reuse th
 test('verified content results reuse across sessions but invalidate tool, environment, config and source changes',t=>{
   const logs=[];
   t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
-  const fixture=mkdtempSync(join(tmpdir(),'nose-result-reuse-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-result-reuse-');
   const root=join(fixture,'repo'),bin=join(fixture,'bin'),calls=join(fixture,'calls');
   mkdirSync(root);mkdirSync(bin);
   writeFileSync(join(root,'a.js'),'export const a=1;\n');
@@ -144,9 +137,8 @@ test('verified content results reuse across sessions but invalidate tool, enviro
       fs.appendFileSync(${JSON.stringify(calls)},'query\\n');console.log(JSON.stringify({families:[]}));
     }
   `,{mode:0o700});
-  const previous=Object.fromEntries(['PATH','NOSE_REVIEW_STATE_ROOT','NOSE_TEST_CONTEXT','XDG_CONFIG_HOME','CODEX_THREAD_ID','TERM_SESSION_ID','NOSE_ANCHOR_MIN_WEIGHT','LC_ALL'].map(key=>[key,process.env[key]]));
+  const previous=preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT','NOSE_TEST_CONTEXT','XDG_CONFIG_HOME','CODEX_THREAD_ID','TERM_SESSION_ID','NOSE_ANCHOR_MIN_WEIGHT','LC_ALL']);
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state'),XDG_CONFIG_HOME:join(fixture,'config')});
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const run=()=>scan(root,['a.js'],root,'a'.repeat(40));
   const count=countRecordedCalls.bind(null,calls);
   const first=run();assert.deepEqual(run(),first);assert.equal(count(),1);
@@ -175,8 +167,7 @@ test('verified content results reuse across sessions but invalidate tool, enviro
 test('CommonJS and short HTML sources stay in verified snapshots and reused results',t=>{
   const logs=[];
   t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
-  const fixture=mkdtempSync(join(tmpdir(),'nose-cjs-cache-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-cjs-cache-');
   const bin=join(fixture,'bin'),root=join(fixture,'repo');
   mkdirSync(bin);mkdirSync(root);
   writeFileSync(join(root,'a.cjs'),'module.exports = 1;\n');
@@ -192,9 +183,8 @@ test('CommonJS and short HTML sources stay in verified snapshots and reused resu
       console.log(JSON.stringify({families:[{locations:['a.cjs','b.htm'].map(file=>({file,start:1,end:1,region:{}}))}]}));
     }
   `,{mode:0o700});
-  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT};
+  const previous=preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT']);
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const files=['a.cjs','b.htm'];
   const first=scan(root,files,root,'b'.repeat(40));
   assert.deepEqual(scan(root,files,root,'b'.repeat(40)),first);
@@ -207,8 +197,7 @@ test('CommonJS and short HTML sources stay in verified snapshots and reused resu
 test('wrapper and hook location variables reuse direct scan results without leaking into the scanner',t=>{
   const logs=[];
   t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
-  const fixture=mkdtempSync(join(tmpdir(),'nose-hook-context-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-hook-context-');
   const owner=join(fixture,'repo'),root=join(fixture,'snapshot'),bin=join(fixture,'bin'),calls=join(fixture,'queries');
   for(const directory of [owner,root,bin]) mkdirSync(directory);
   execFileSync('git',['init','-q'],{cwd:owner});
@@ -228,8 +217,7 @@ test('wrapper and hook location variables reuse direct scan results without leak
       console.log(JSON.stringify({families:[]}));
     }
   `,{mode:0o700});
-  const previous=Object.fromEntries(['PATH','NOSE_REVIEW_STATE_ROOT','GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0',...Object.keys(locations)].map(key=>[key,process.env[key]]));
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const previous=preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT','GIT_CONFIG_COUNT','GIT_CONFIG_KEY_0','GIT_CONFIG_VALUE_0',...Object.keys(locations)]);
   for(const key of Object.keys(previous)) if(key!=='PATH') delete process.env[key];
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
   const run=()=>scan(root,['a.js'],owner,'hook-context-content');
@@ -253,8 +241,7 @@ test('wrapper and hook location variables reuse direct scan results without leak
 test('scan phase timings include source snapshot, cache write and total duration',t=>{
   const logs=[];
   t.mock.method(process.stderr,'write',chunk=>{logs.push(String(chunk));return true;});
-  const fixture=mkdtempSync(join(tmpdir(),'nose-scan-timing-'));
-  t.after(()=>rmSync(fixture,{recursive:true,force:true}));
+  const fixture=testDirectory(t,'nose-scan-timing-');
   const root=join(fixture,'repo'),bin=join(fixture,'bin');
   mkdirSync(root);mkdirSync(bin);writeFileSync(join(root,'a.js'),'export const a=1;\n');
   writeFileSync(join(bin,'nose'),'#!'+process.execPath+'\n'+`
@@ -263,9 +250,8 @@ test('scan phase timings include source snapshot, cache write and total duration
       config_file:null,query:{'ignore-file':null,'semantic-pack-lock':null,'semantic-packs':[]}}));
     else console.log(JSON.stringify({families:[]}));
   `,{mode:0o700});
-  const previous={PATH:process.env.PATH,NOSE_REVIEW_STATE_ROOT:process.env.NOSE_REVIEW_STATE_ROOT};
+  const previous=preserveEnvironment(t,['PATH','NOSE_REVIEW_STATE_ROOT']);
   Object.assign(process.env,{PATH:bin+':'+previous.PATH,NOSE_REVIEW_STATE_ROOT:join(fixture,'state')});
-  t.after(()=>{for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
   const run=()=>scan(root,['a.js'],root,'timing-content');
   run();
   const phases=['source snapshot','cache identity/read','native execution','report/source verification','result write','total'];

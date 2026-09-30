@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import fs from 'node:fs';
@@ -10,10 +9,10 @@ import * as policy from './review-policy.mjs';
 
 import { filterChangedCandidates, filterRemoteExisting, filterReviewed, fingerprintFamily, hash, memberHashesForFamily, reviewedReductions } from "./review-policy.mjs";
 import { scan } from "./review-runtime.mjs";
+import {testDirectory} from './test-helpers.mjs';
 
 function fixture(t) {
-  const directory = mkdtempSync(join(tmpdir(), "nose-policy-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const directory = testDirectory(t, "nose-policy-");
   const root = join(directory, "repo");
   mkdirSync(root);
   writeFileSync(join(root, "a.js"), "const value = 1;\nreturn value;\n");

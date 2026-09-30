@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import * as policy from './review-policy.mjs';
 import { createMemberHasher, hash, isSourceFile, verifiedFamilies } from './source-evidence.mjs';
+import {testDirectory} from './test-helpers.mjs';
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'nose-source-evidence-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = testDirectory(t, 'nose-source-evidence-');
   writeFileSync(join(root, 'a.js'), 'const value = 1;  \r\nreturn value;\t\r\n');
   writeFileSync(join(root, 'b.js'), '// moved\nconst value = 1;\nreturn value;\n');
   return root;
@@ -28,8 +27,7 @@ test('source classification covers alternate suffixes, case folding and non-sour
 });
 
 test('source aliases resolve symlinks before parent components and reject outside bytes',t=>{
-  const directory=mkdtempSync(join(tmpdir(),'nose-alias-boundary-'));
-  t.after(()=>rmSync(directory,{recursive:true,force:true}));
+  const directory=testDirectory(t,'nose-alias-boundary-');
   const root=join(directory,'repo');
   mkdirSync(root);
   writeFileSync(join(root,'file'),'tracked\n');
