@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from './review-runtime.mjs';
 import { scanSecrets } from './secret-scan.mjs';
+import { createHash } from 'node:crypto';
+import { readSecretReviews, secretDetectorIdentity, secretReviewMatcher } from './secret-review.mjs';
 
 const batchFiles = 256;
 const batchBytes = 32 * 1024 * 1024;
@@ -69,13 +71,16 @@ function extractBatch(root, batch, temporary, directory) {
       if (header !== `${blob.object} blob ${blob.size}`) throw new Error('Invalid changed-blob framing');
       const name = `${index}.blob`;
       const descriptor = openSync(join(directory, name), 'wx', 0o600);
+      const contentHash = createHash('sha256');
       try {
         for (let remaining = blob.size; remaining > 0;) {
           const count = read(Math.min(remaining, buffer.length));
+          contentHash.update(buffer.subarray(0, count));
           for (let written = 0; written < count;) written += writeSync(descriptor, buffer, written, count - written);
           remaining -= count;
         }
       } finally { closeSync(descriptor); }
+      blob.sourceHash = contentHash.digest('hex');
       read(1);
       if (buffer[0] !== 10) throw new Error('Invalid changed-blob terminator');
     }
@@ -84,12 +89,15 @@ function extractBatch(root, batch, temporary, directory) {
 }
 
 // Deduplicate only within this invocation; every historical occurrence retains its result.
-export function scanCommitsSecrets(root, shas) {
+export function scanCommitsSecrets(root, shas, {applyReviews = true} = {}) {
   const results = new Map([...new Set(shas)].map(sha => [sha, {status: 'passed', findings: []}]));
   if (!results.size) return results;
   const occurrences = new Map();
   let temporary;
   try {
+    const detectorIdentity = secretDetectorIdentity();
+    const isReviewedNonSecret = secretReviewMatcher(applyReviews ? readSecretReviews(root) : null, detectorIdentity);
+    for (const result of results.values()) Object.assign(result, {detectorIdentity, reviewedNonSecrets: 0});
     for (const sha of results.keys()) {
       for (const {object, file} of changedBlobs(root, sha)) {
         if (!occurrences.has(object)) occurrences.set(object, []);
@@ -105,14 +113,16 @@ export function scanCommitsSecrets(root, shas) {
         if (batch.length) extractBatch(root, batch, temporary, directory);
         const result = scanSecrets(directory);
         if (result.status === 'unavailable') throw new Error('Secret detector unavailable');
-        const paths = new Map(batch.map((blob, index) => [`${index}.blob`, blob.object]));
+        const paths = new Map(batch.map((blob, index) => [`${index}.blob`, blob]));
         for (const finding of result.findings) {
-          const object = paths.get(finding.file);
-          if (!object) throw new Error('Secret finding outside changed blobs');
-          for (const {sha, file} of occurrences.get(object)) {
+          const blob = paths.get(finding.file);
+          if (!blob) throw new Error('Secret finding outside changed blobs');
+          for (const {sha, file} of occurrences.get(blob.object)) {
             const target = results.get(sha);
+            const candidate = {...finding, file, sourceHash: blob.sourceHash};
+            if (isReviewedNonSecret(candidate)) { target.reviewedNonSecrets++; continue; }
             target.status = 'blocked';
-            target.findings.push({...finding, file});
+            target.findings.push(candidate);
           }
         }
       } finally { rmSync(directory, {recursive: true, force: true}); }
@@ -129,6 +139,7 @@ export function scanCommitsSecrets(root, shas) {
       // A blob larger than the byte budget is scanned alone, never truncated or skipped.
       if (batch.length) scanBatch(batch);
     }
+    if (secretDetectorIdentity() !== detectorIdentity) throw new Error('Secret detector identity changed during scan');
     return results;
   } catch {
     return new Map([...results.keys()].map(sha => [sha, {

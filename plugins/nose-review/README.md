@@ -101,6 +101,26 @@ files or 32 MiB; a larger individual blob is checked alone. Each finding is mapp
 back to every original commit and path, including copies later deleted. Secret
 scan results are not persisted between pushes.
 
+Verified non-secret findings can be reviewed separately from duplication. The
+local, Git-excluded `.nose-review/non-secret-reviews.json` binds each decision to
+the Gitleaks version and fixed default-rule contract, original path, SHA-256 of
+the complete committed file bytes, rule, and exact line/column span. All changed
+blobs are still scanned. A changed file, moved finding, new span, or detector
+version gets no benefit from an old decision. Commit/tag metadata cannot be
+classified through this file-review route. Invalid or unsafe policies fail closed.
+
+Use `node scripts/review-secrets.mjs record-batch PROJECT DECISIONS.json` only
+after verifying the finding is derived public data, a public identifier, a
+synthetic fixture without live authority, or a source reference. Each input
+decision needs `commit`, `file`, `sourceHash`, `kind`, a concrete `reason`, and
+explicit `findings` containing `rule`, `line`, and `span` (`endLine`, `column`,
+`endColumn`); the envelope has `schemaVersion: 1` and `detectorIdentity` from the
+current secret report. The command rescans the immutable commits without applying
+previous decisions and validates the entire batch before saving atomically. There
+are no path/rule exclusions or accept-all operation. Never classify an actual
+credential as non-secret, include its value in a reason, or reuse a decision for
+unreviewed source. Repository/environment allowlists remain disabled.
+
 Outgoing commit metadata and the pushed annotated-tag chain are scanned too;
 findings use `git-metadata/<object-id>.commit.txt` or `.tag.txt` locations.
 For duplication checks, `.gitignore`, `.ignore`, and `nose.ignore.json` are
@@ -128,6 +148,8 @@ commits and arrange owner rotation for already exposed credentials. A new remova
 commit alone cannot clean earlier outgoing commits. History rewriting requires
 explicit user approval; the plugin never rewrites history or accepts secrets as
 intentional duplication. Gitleaks missing or failing blocks as unavailable.
+Verified non-secrets use the separate exact-source review command above; this
+does not authorize leaving credentials in outgoing history.
 
 Each failed plugin gate saves a timestamp/UUID-named JSON record under
 `.nose-review/failures/` (private directory and files). Later scans can replace

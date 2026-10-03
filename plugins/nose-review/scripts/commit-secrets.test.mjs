@@ -5,6 +5,36 @@ import { mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanCommitSecrets, scanCommitsSecrets } from './commit-secrets.mjs';
 import { commitAll, gitFixture } from './test-helpers.mjs';
+import { spawnSync } from 'node:child_process';
+
+test('exact-source non-secret decisions permit reviewed public hashes without excluding later credentials', t => {
+  const {root, git} = gitFixture(t, 'nose-reviewed-public-data-');
+  const contents = `const cache_key = "${createHash('sha256').update('public translation cache fixture').digest('hex')}";\n`;
+  writeFileSync(join(root, 'cache.js'), contents);
+  const initial = commitAll(git);
+  const first = scanCommitSecrets(root, initial);
+  assert.equal(first.status, 'blocked');
+  assert.deepEqual(first.findings.map(({rule, file, line}) => ({rule, file, line})),
+    [{rule: 'generic-api-key', file: 'cache.js', line: 1}]);
+  mkdirSync(join(root, '.nose-review'));
+  const version = spawnSync('gitleaks', ['version'], {encoding: 'utf8'}).stdout.trim();
+  writeFileSync(join(root, '.nose-review/non-secret-reviews.json'), JSON.stringify({
+    schemaVersion: 1, detectorIdentity: `gitleaks/${version}/default-rules-v1`, decisions: [{
+      file: 'cache.js', sourceHash: createHash('sha256').update(contents).digest('hex'),
+      kind: 'derived-public-data', reason: 'SHA-256 of the public translation cache fixture, independently reproduced.',
+      findings: first.findings.map(({rule, line, span}) => ({rule, line, span})),
+    }],
+  }));
+  assert.equal(scanCommitSecrets(root, initial).status, 'passed');
+  const secret = ['gh', 'p_'].join('') + randomBytes(18).toString('hex');
+  writeFileSync(join(root, 'cache.js'), contents + `token=${secret}\n`);
+  const changed = commitAll(git);
+  const results = scanCommitsSecrets(root, [initial, changed]);
+  assert.equal(results.get(initial).status, 'passed');
+  assert.equal(results.get(changed).status, 'blocked');
+  assert.equal(results.get(changed).findings.length, 2);
+  assert.ok(!JSON.stringify([...results]).includes(secret));
+});
 
 test('changed-blob scans exclude inherited secrets and retain intermediate, merge, and symlink coverage', t => {
   const {root, git} = gitFixture(t, 'nose-changed-secrets-');
@@ -39,6 +69,7 @@ function instrumentDetector(t, root, fail = false) {
   const log = join(directory, 'calls.jsonl');
   writeFileSync(join(directory, 'gitleaks'), `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+if (process.argv[2] === 'version') { console.log('8.29.1'); process.exit(0); }
 const args = process.argv.slice(2), directory = args[1];
 const files = fs.readdirSync(directory).map(file => {
   const bytes = fs.readFileSync(path.join(directory, file));
@@ -46,7 +77,7 @@ const files = fs.readdirSync(directory).map(file => {
 });
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(files) + '\\n');
 if (${fail}) process.exit(2);
-fs.writeFileSync(args[args.indexOf('--report-path') + 1], JSON.stringify(files.map(item => ({File: item.file, RuleID: 'fixture', StartLine: 1}))));
+fs.writeFileSync(args[args.indexOf('--report-path') + 1], JSON.stringify(files.map(item => ({File: item.file, RuleID: 'fixture', StartLine: 1, EndLine: 1, StartColumn: 0, EndColumn: 1}))));
 process.exit(files.length ? 1 : 0);
 `, {mode: 0o700});
   const previous = process.env.PATH;
@@ -69,7 +100,7 @@ test('shared blobs scan once and fan out to all historical paths with binary byt
   const results = scanCommitsSecrets(root, [initial, removed, restored]);
   assert.deepEqual(results.get(initial).findings.map(item => item.file).sort(), ['first\nfile.bin', 'second.bin']);
   assert.equal(results.get(removed).status, 'passed');
-  assert.deepEqual(results.get(restored).findings, [{rule: 'fixture', line: 1, file: 'third.bin'}]);
+  assert.deepEqual(results.get(restored).findings, [{rule: 'fixture', line: 1, span: {endLine: 1, column: 0, endColumn: 1}, file: 'third.bin', sourceHash: createHash('sha256').update(bytes).digest('hex')}]);
   assert.deepEqual(calls(), [[{file: '0.blob', size: bytes.length, hash: createHash('sha256').update(bytes).digest('hex')}]]);
   scanCommitsSecrets(root, [restored]);
   assert.equal(calls().length, 2, 'no cache survives another invocation');

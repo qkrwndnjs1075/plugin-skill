@@ -136,6 +136,12 @@ export function runPrePush(input, args, cwd = process.cwd()) {
         if(record.secrets.status==='unavailable') break;
         const result=secretResults.get(sha);
         record.secrets.commitsScanned++;
+        if (result.detectorIdentity) {
+          if (record.secrets.detectorIdentity && record.secrets.detectorIdentity !== result.detectorIdentity)
+            throw new Error('Secret detector identity changed between commits');
+          record.secrets.detectorIdentity = result.detectorIdentity;
+        }
+        record.secrets.reviewedNonSecrets = (record.secrets.reviewedNonSecrets ?? 0) + (result.reviewedNonSecrets ?? 0);
         for (const finding of result.findings) record.secrets.findings.push({...finding,commit:sha});
         if(result.status==='unavailable') { record.secrets.status='unavailable'; record.secrets.reason=result.reason; break; }
         if(result.status==='blocked') record.secrets.status='blocked';

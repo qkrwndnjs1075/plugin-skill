@@ -19,7 +19,7 @@ test('default secret rules cannot be disabled by repository config, comments or 
     assert.equal(result.status,'blocked',JSON.stringify(result));
     assert.ok(result.findings.some(f=>f.file==='config.txt' && f.line===1));
     assert.ok(!JSON.stringify(result).includes(secret));
-    assert.ok(result.findings.every(f=>Object.keys(f).sort().join(',')==='file,line,rule'));
+    assert.ok(result.findings.every(f=>Object.keys(f).sort().join(',')==='file,line,rule,span'));
   } finally { if(old===undefined) delete process.env.GITLEAKS_CONFIG_TOML; else process.env.GITLEAKS_CONFIG_TOML=old; }
 });
 

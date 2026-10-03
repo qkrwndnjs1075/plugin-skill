@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { refTimeoutMs, shellQuote as quote } from './review-runtime.mjs';
 
 const marker='# nose-review managed pre-push v1';
-export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','failure-history.mjs'];
+export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','secret-review.mjs','failure-history.mjs'];
 function hookContent(release,data) {
   const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);
   const bootstrap=`const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),url=require('node:url');

@@ -427,6 +427,7 @@ test('multiple pushed refs reuse commit secret scans while retaining per-ref rep
   mkdirSync(bin);
   writeFileSync(join(bin,'gitleaks'),'#!'+process.execPath+'\n'+`
     const fs=require('node:fs'),args=process.argv.slice(2);
+    if(args[0]==='version'){console.log('8.29.1');process.exit(0);}
     fs.appendFileSync(${JSON.stringify(calls)},'scan\\n');
     fs.writeFileSync(args[args.indexOf('--report-path')+1],'[]');
   `,{mode:0o700});
@@ -434,8 +435,8 @@ test('multiple pushed refs reuse commit secret scans while retaining per-ref rep
   assert.equal(result.status,1,result.stderr);
   const report=f.report();
   assert.deepEqual(report.refs.map(ref=>ref.secrets),[
-    {status:'passed',findings:[],commitsScanned:1},
-    {status:'passed',findings:[],commitsScanned:1},
+    {status:'passed',findings:[],commitsScanned:1,detectorIdentity:'gitleaks/8.29.1/default-rules-v1',reviewedNonSecrets:0},
+    {status:'passed',findings:[],commitsScanned:1,detectorIdentity:'gitleaks/8.29.1/default-rules-v1',reviewedNonSecrets:0},
   ]);
   assert.equal(readFileSync(calls,'utf8').trim().split('\n').length,3,'two metadata scans and one shared commit scan');
 });

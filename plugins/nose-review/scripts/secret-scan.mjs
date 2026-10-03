@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, isAbsolute, sep } from 'node:path';
+import { validSecretFinding } from './secret-review.mjs';
 
 export function scanSecrets(directory) {
   const temporary=mkdtempSync(join(tmpdir(),'nose-secrets-'));
@@ -20,7 +21,10 @@ export function scanSecrets(directory) {
       if(typeof item.File!=='string' || typeof item.RuleID!=='string' || !Number.isInteger(item.StartLine) || item.StartLine<1) throw new Error('Invalid finding');
       const file=relative(directory,resolve(directory,item.File));
       if(!file || file==='..' || file.startsWith('..'+sep) || isAbsolute(file)) throw new Error('Outside snapshot');
-      return {rule:item.RuleID,file:file.split(sep).join('/'),line:item.StartLine};
+      const finding = {rule:item.RuleID,file:file.split(sep).join('/'),line:item.StartLine,
+        span: {endLine: item.EndLine, column: item.StartColumn, endColumn: item.EndColumn}};
+      if (!validSecretFinding(finding)) throw new Error('Invalid finding span');
+      return finding;
     });
     return {status:findings.length?'blocked':'passed',findings};
   } catch {
