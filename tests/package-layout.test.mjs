@@ -11,7 +11,7 @@ test('repository marketplace exposes isolated plugin packages',()=>{
   const marketplace=readJson(join(root,'.agents/plugins/marketplace.json'));
   assert.equal(marketplace.name,'plugin-skill');
   assert.equal(marketplace.interface.displayName,'Joowon Plugins');
-  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin']);
+  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin','file-checks']);
   for(const plugin of marketplace.plugins) {
     const directory=resolve(root,plugin.source.path);
     assert.ok(directory.startsWith(join(root,'plugins')+'/'));

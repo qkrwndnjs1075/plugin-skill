@@ -1,0 +1,4 @@
+interface:
+  display_name: "File Checks Settings"
+  short_description: "Manage this project's file checks and rule groups"
+  default_prompt: "Use $file-checks status to show this project's commit gate settings."

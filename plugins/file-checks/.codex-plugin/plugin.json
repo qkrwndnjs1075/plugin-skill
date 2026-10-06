@@ -1,0 +1,14 @@
+{
+  "name": "file-checks",
+  "version": "0.1.0",
+  "description": "Check staged whitespace, newlines, and JSON/YAML/TOML syntax before commits",
+  "author": { "name": "qkrwndnjs1075" },
+  "interface": {
+    "displayName": "File Checks",
+    "shortDescription": "Check staged file hygiene and configuration syntax.",
+    "longDescription": "Registers an independent Git pre-commit check for staged text files. Reports whitespace, newline, and JSON/YAML/TOML syntax problems without modifying working files or the index.",
+    "developerName": "qkrwndnjs1075",
+    "category": "Productivity",
+    "capabilities": []
+  }
+}

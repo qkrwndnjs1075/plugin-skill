@@ -10,6 +10,7 @@ import { duplicateSource } from '../plugins/nose-review/scripts/test-helpers.mjs
 const plugins = resolve(dirname(fileURLToPath(import.meta.url)), '../plugins');
 const packages = [
   { name: 'nose-review', event: 'pre-push', installer: 'install-pre-push.mjs' },
+  { name: 'file-checks', event: 'pre-commit', installer: 'install-pre-commit.mjs' },
 ];
 
 function fixture(t, name) {
@@ -115,6 +116,56 @@ for (const pkg of packages) {
     assert.equal(f.control('status').state, 'off');
   });
 }
+
+for (const [group, allowed, blocked, rule] of [
+  ['whitespace', ['valid.json', '{}  '], ['invalid.json', '{invalid}\n'], 'check-json'],
+  ['syntax', ['invalid.json', '{invalid}\n'], ['trailing.txt', 'text \n'], 'trailing-whitespace'],
+]) {
+  test(`File Checks: ${group} selection persists across overall toggles and changes real commit behavior`, t => {
+    const f = fixture(t, 'file-checks');
+    assert.equal(f.control('on').state, 'on');
+    const command = f.git('config', '--get', 'hook.file-checks.command');
+    assert.equal(f.control(group, 'off').checks[group], false);
+    assert.equal(f.control('off').state, 'off');
+    assert.equal(f.control('on').checks[group], false);
+    assert.equal(f.git('config', '--get', 'hook.file-checks.command'), command);
+    f.stage(...allowed);
+    const passed = f.commit();
+    assert.equal(passed.status, 0, passed.stderr);
+    f.stage(...blocked);
+    const failed = f.commit();
+    assert.notEqual(failed.status, 0);
+    assert.ok(failed.stderr.includes(rule), failed.stderr);
+    assert.equal(f.control(group, 'on').checks[group], true);
+  });
+}
+
+test('File Checks: group choices while OFF do not activate the hook; malformed groups fail closed', t => {
+  const f = fixture(t, 'file-checks');
+  f.control('off');
+  assert.equal(f.control('syntax', 'off').state, 'off');
+  assert.equal(existsSync(join(f.root, '.git/file-checks')), false);
+  f.control('on');
+  f.git('config', 'file-checks.whitespace', 'invalid');
+  const status = f.run(process.execPath, [f.script, f.root, 'status']);
+  assert.equal(status.status, 2);
+  f.stage('valid.txt', 'valid\n');
+  const committed = f.commit();
+  assert.notEqual(committed.status, 0);
+  assert.match(committed.stderr, /FILE_CHECKS_UNAVAILABLE/);
+});
+
+test('File Checks: OFF permits a commit and ON restores the gate', t => {
+  const f = fixture(t, 'file-checks');
+  f.control('on');
+  f.stage('config.json', '{invalid}\n');
+  assert.notEqual(f.commit().status, 0);
+  f.control('off');
+  assert.equal(f.commit().status, 0);
+  f.control('on');
+  f.stage('config.json', '{still invalid}\n');
+  assert.notEqual(f.commit().status, 0);
+});
 
 test('Nose Review: OFF permits a local push and ON restores duplication blocking', t => {
   const f = fixture(t, 'nose-review');
