@@ -1,13 +1,13 @@
 {
   "name": "joowon-plugin",
-  "version": "0.1.0+codex.20260914032922",
+  "version": "0.1.1",
   "description": "Create responsibility-scoped commits and coherent pull requests",
   "author": {
     "name": "qkrwndnjs1075"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Joowon Plugin",
+    "displayName": "Git Workflow",
     "shortDescription": "Create clean commits and coherent pull requests.",
     "longDescription": "Provides Commit and PR workflows that preserve responsibility-level history and reviewer-ready evidence.",
     "developerName": "qkrwndnjs1075",

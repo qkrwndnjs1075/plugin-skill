@@ -10,7 +10,7 @@ const readJson=path=>JSON.parse(readFileSync(path,'utf8'));
 test('repository marketplace exposes isolated plugin packages',()=>{
   const marketplace=readJson(join(root,'.agents/plugins/marketplace.json'));
   assert.equal(marketplace.name,'plugin-skill');
-  assert.equal(marketplace.interface.displayName,'Joowon-plugin');
+  assert.equal(marketplace.interface.displayName,'Joowon Plugins');
   assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin']);
   for(const plugin of marketplace.plugins) {
     const directory=resolve(root,plugin.source.path);
@@ -21,7 +21,7 @@ test('repository marketplace exposes isolated plugin packages',()=>{
   }
 });
 
-test('Joowon Plugin preserves the local Commit and PR skill packages',()=>{
+test('Git Workflow preserves the local Commit and PR skill packages',()=>{
   for(const skill of ['commit','pr']) {
     const directory=join(root,'plugins/joowon-plugin/skills',skill);
     assert.ok(existsSync(join(directory,'SKILL.md')));

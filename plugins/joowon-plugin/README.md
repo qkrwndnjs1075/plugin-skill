@@ -1,4 +1,4 @@
-# Joowon Plugin
+# Git Workflow
 
 Two Codex skills for delivering Git changes clearly.
 
