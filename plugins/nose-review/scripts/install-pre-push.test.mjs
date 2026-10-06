@@ -82,18 +82,21 @@ test('registration retires only owned legacy wrappers and preserves each worktre
     assert.notEqual(spawnSync('git',['commit','--allow-empty','-qm','blocked'],{cwd:worktree}).status,0);
   }
 });
-for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) test(`installation reports a disabled gate: ${key}`,t=>{
+for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) test(`installation preserves OFF without preparing a gate: ${key}`,t=>{
   const f=fixture(t);
   execFileSync('git',['config',key,'false'],{cwd:f.repo});
-  assert.throws(()=>install(f.repo,f.source),/disables the Nose gate/);
+  assert.equal(install(f.repo,f.source).status,'off');
+  assert.equal(existsSync(join(f.repo,'.git/nose-review')),false);
   assert.equal(execFileSync('git',['config','--get',key],{cwd:f.repo,encoding:'utf8'}).trim(),'false');
 });
-test('installation detects a disabled gate in another worktree without overwriting its choice',t=>{
+test('installation respects a disabled sibling worktree while preparing enabled worktrees',t=>{
   const f=committedFixture(t),linked=join(f.temp,'linked');
   git(f.repo,'config','extensions.worktreeConfig','true');
   git(f.repo,'worktree','add','-qb','linked',linked);
   git(linked,'config','--worktree','hook.nose-review.enabled','false');
-  assert.throws(()=>install(f.repo,f.source),/disables the Nose gate/);
+  assert.equal(install(f.repo,f.source).status,'installed');
+  assert.ok(git(f.repo,'hook','list','-z','pre-push').split('\0').includes('nose-review'));
+  assert.ok(!git(linked,'hook','list','-z','pre-push').split('\0').includes('nose-review'));
   assert.equal(git(linked,'config','--worktree','--get','hook.nose-review.enabled'),'false');
 });
 test('installation preserves an unrelated command occupying its registration name',t=>{

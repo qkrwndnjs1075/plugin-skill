@@ -1,6 +1,24 @@
 # Nose Review
 
-Code duplication and secret checks at push time, with an on-demand `$nose-fix` skill.
+Code duplication and secret checks at push time, with `$nose-review` project settings and an on-demand `$nose-fix` skill.
+
+## Project settings
+
+```text
+$nose-review on
+$nose-review off
+$nose-review status
+```
+
+These commands control this repository's push gate through `hook.nose-review.enabled` in Git's local configuration. OFF preserves reports and review decisions and prevents automatic setup or scans. New sessions and plugin updates leave it OFF. ON uses the existing installer to prepare the gate again. Explicit manual Nose Fix scans remain available while the automatic gate is OFF.
+
+Repository settings are shared by linked worktrees and do not affect other repositories. Existing worktree-specific overrides or an event-wide `hook.pre-push.enabled=false` are preserved; an ON request reports the conflict rather than changing another setting. A valid disabled state is reported as OFF, not as an installation failure.
+
+Status reports ON, OFF, or an error with the project path. It checks registration and tool availability without scanning source, writing review decisions, or installing a hook. ON means the gate is configured and its tools are available, not that the source has passed review. CLI equivalent:
+
+```sh
+node scripts/project-settings.mjs /path/to/project status
+```
 
 ## Automatic installation
 

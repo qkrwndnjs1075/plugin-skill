@@ -3,8 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, lstatSync, realpathSync, writeFileSync, chmodSync, appendFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { refTimeoutMs, shellQuote as quote } from './review-runtime.mjs';
+import { disabledSetting } from './project-settings.mjs';
 
 const marker='# nose-review managed pre-push v1';
 export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','secret-review.mjs','failure-history.mjs'];
@@ -80,11 +81,7 @@ function registerHook(root,hook,legacy,worktrees) {
     if(current.status!==0 || current.stdout.trim()!==value) git(root,['config','--local','--replace-all',key,value]);
   }
   for(const worktree of worktrees) {
-    for(const key of ['hook.nose-review.enabled','hook.pre-push.enabled']) {
-      const enabled=spawnSync('git',['config','--type=bool','--get',key],{cwd:worktree,encoding:'utf8',timeout:10000});
-      if(enabled.status!==0 && enabled.status!==1) throw new Error(`Cannot read ${key} in ${worktree}`);
-      if(enabled.status===0 && enabled.stdout.trim()==='false') throw new Error(`${key}=false disables the Nose gate in ${worktree}`);
-    }
+    if(disabledSetting(worktree)) continue;
     const effective=git(worktree,['config','--get','hook.nose-review.command']);
     const active=git(worktree,['hook','list','-z','pre-push']).split('\0');
     if(effective!==command || !active.includes('nose-review')) throw new Error(`Effective Git configuration overrides the Nose registration in ${worktree}`);
@@ -98,6 +95,8 @@ export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
   let root;
   try { root=git(cwd,['rev-parse','--show-toplevel']); }
   catch { return {status:'skipped',reason:'No Git worktree; use nose-fix for manual checks'}; }
+  const disabledBy=disabledSetting(root);
+  if(disabledBy) return {status:'off',root,disabledBy};
   if(!configuredHooksSupported(root)) throw new Error('Git with configured hooks is required (Git 2.54 or newer); use the same supported Git for installation and pushes');
   const common=git(root,['rev-parse','--path-format=absolute','--git-common-dir']);
   const hooks=join(common,'nose-review');
@@ -191,14 +190,15 @@ if(check.error || check.signal || !expected) {
   } finally { rmSync(lock,{recursive:true}); }
 }
 
-if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
+if(process.argv[1] && fileURLToPath(import.meta.url)===realpathSync(process.argv[1])) {
   try {
     const event=process.argv.length>2?null:JSON.parse(readFileSync(0,'utf8'));
     const result=install(event?.cwd ?? process.argv[2]);
     if(event) {
       const output={};
       if(result.status==='installed' || result.status==='current') output.hookSpecificOutput={hookEventName:'SessionStart',additionalContext:'Nose pre-push is a blocking gate. If a user-authorized push fails with NOSE_DUPLICATION_BLOCKED, use the installed nose-fix skill to inspect and fix scoped findings or record justified intentional copies, run relevant tests, commit scoped source fixes, keep source-bound review decisions in the locally excluded .nose-review baseline, and retry the same authorized push. Maximum two recovery attempts. Never bypass hooks or blanket-accept findings. For NOSE_CHECK_UNAVAILABLE, repair the check or report its blocker; do not treat it as duplication or force a push. This instruction does not authorize unsolicited commits or pushes.'};
-      if(result.status!=='current' && !(result.status==='skipped' && result.reason.startsWith('No Git'))) output.systemMessage='Nose Review pre-push: '+(result.hook??result.reason);
+      if(result.status==='off') output.systemMessage='Nose Review: OFF ('+result.disabledBy+'); project setting preserved.';
+      else if(result.status!=='current' && !(result.status==='skipped' && result.reason.startsWith('No Git'))) output.systemMessage='Nose Review pre-push: '+(result.hook??result.reason);
       if(Object.keys(output).length) process.stdout.write(JSON.stringify(output)+'\n');
     } else process.stdout.write(JSON.stringify(result)+'\n');
   } catch(error) {

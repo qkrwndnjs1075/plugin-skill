@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nose Review Settings"
+  short_description: "Manage this project's Nose Review push gate"
+  default_prompt: "Use $nose-review status to show this project's push gate settings."

@@ -4,7 +4,7 @@ A Codex plugin marketplace containing independently installable packages.
 
 ## Packages
 
-- [`nose-review`](plugins/nose-review/README.md): blocking pre-push duplication and secret checks with a scoped Nose Fix workflow.
+- [`nose-review`](plugins/nose-review/README.md): blocking pre-push duplication and secret checks, project on/off/status, and a scoped Nose Fix workflow.
 - [`skill-maintenance`](plugins/skill-maintenance/README.md): explicit Skill Eraser and Skill Updater workflows for user-managed Codex skills.
 - [Git Workflow](plugins/joowon-plugin/README.md) (`joowon-plugin`): responsibility-scoped Commit and coherent PR workflows.
 
