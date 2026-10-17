@@ -198,7 +198,7 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity, evid
   const cacheReadStarted=performance.now();
   const cacheDirectory = cacheStateRoot(cacheOwner);
   const inputs=scannerInputs(root,{cacheDirectory,cacheOwner,managed:verifiedFiles!==undefined || isGit(root),exclusions:[...excluded]});
-  const {env,args,cache,threads,noseVersion}=inputs;
+  const {env,args,cache,threads,noseVersion,executable}=inputs;
   const temporary = mkdtempSync(join(tmpdir(),'nose-review-scan-'));
   try {
     const contentIdentity=()=>verifiedFiles === undefined ? workingIdentity(root) : inputIdentity;
@@ -229,7 +229,7 @@ export function scan(root, verifiedFiles, cacheOwner = root, inputIdentity, evid
     try {
       process.stderr.write(`[nose scan] ${Object.keys(before).length} source files; worker setting ${threads}; reusable cache ${cache}; budget ${scanTimeoutMs / 1000}s\n`);
       scannerStarted=performance.now();
-      result = spawnSync('nose',args,{
+      result = spawnSync(executable,args,{
         cwd:root,
         env,
         encoding:'utf8',

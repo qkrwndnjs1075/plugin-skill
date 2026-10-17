@@ -1,0 +1,10 @@
+{
+  "version": "v0.21.0",
+  "repository": "qkrwndnjs1075/nose",
+  "assets": {
+    "darwin-arm64": {"name":"nose-cli-aarch64-apple-darwin.tar.xz","sha256":"f59993ed5157fbb757d992f10b601c966ab004dd52348a6e492310c21cafd891"},
+    "darwin-x64": {"name":"nose-cli-x86_64-apple-darwin.tar.xz","sha256":"e5cb88d02ef22387d6b7e97e0dd48fadc094ba92f653d5712c4d99c624afd718"},
+    "linux-arm64": {"name":"nose-cli-aarch64-unknown-linux-gnu.tar.xz","sha256":"fbda5adc746c9d0e6a3516236892e467227367ccad528fb3af1e3a87713e88e0"},
+    "linux-x64": {"name":"nose-cli-x86_64-unknown-linux-gnu.tar.xz","sha256":"49055374c37c4216d55f32ab389ed80f6cbdcf3f07f157d59880f9b005e6f5e6"}
+  }
+}

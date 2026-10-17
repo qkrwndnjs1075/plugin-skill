@@ -17,6 +17,8 @@ export const duplicateSource = name => `export function ${name}(items) {
 export function testDirectory(t, prefix) {
   const directory = mkdtempSync(join(tmpdir(), prefix));
   t.after(() => rmSync(directory, {recursive:true, force:true}));
+  preserveEnvironment(t, ['NOSE_REVIEW_RUNTIME_ROOT']);
+  process.env.NOSE_REVIEW_RUNTIME_ROOT = join(directory, 'managed-runtime');
   return directory;
 }
 

@@ -4,6 +4,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { git, shellQuote } from './review-runtime.mjs';
+import { resolveNose } from './nose-runtime.mjs';
 
 function setting(root, key, boolean = false) {
   const args = boolean
@@ -37,7 +38,7 @@ export function status(root) {
     throw new Error('Nose Review is not ready; run $nose-review on to register or repair it.');
   if (!git(root, ['hook', 'list', '-z', 'pre-push']).split('\0').includes('nose-review'))
     throw new Error('Git does not list Nose Review as an active pre-push hook.');
-  for (const [tool, args] of [['nose', ['--version']], ['gitleaks', ['version']]]) {
+  for (const [tool, args] of [[resolveNose({cwd:root}), ['--version']], ['gitleaks', ['version']]]) {
     const probe = spawnSync(tool, args, { cwd: root, encoding: 'utf8', timeout: 10000 });
     if (probe.error || probe.status !== 0) throw new Error(tool + ' is unavailable; install it and retry $nose-review status.');
   }
@@ -55,7 +56,7 @@ export function configure(cwd, action) {
     const disabledBy = disabledSetting(root);
     if (disabledBy) throw new Error(disabledBy + ' still disables this worktree; its override was preserved.');
     const setup = spawnSync(process.execPath, [fileURLToPath(new URL('./install-pre-push.mjs', import.meta.url)), root],
-      { cwd: root, encoding: 'utf8', timeout: 30000 });
+      { cwd: root, encoding: 'utf8', timeout: 180000 });
     if (setup.error || setup.status !== 0) throw new Error('Nose Review setup failed: ' + (setup.stdout?.trim() || setup.error?.message || 'see installation prerequisites.'));
   }
   const result = status(root);

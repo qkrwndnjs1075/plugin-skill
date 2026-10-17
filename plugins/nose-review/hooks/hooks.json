@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/scripts/install-pre-push.mjs\"",
-            "timeout": 15,
+            "timeout": 180,
             "statusMessage": "Setting up Nose pre-push"
           }
         ]

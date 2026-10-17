@@ -22,6 +22,19 @@ node scripts/project-settings.mjs /path/to/project status
 
 ## Automatic installation
 
+Trusted session setup prepares the pinned Nose binary from the independent,
+private [`qkrwndnjs1075/nose`](https://github.com/qkrwndnjs1075/nose) distribution.
+First installation requires GitHub CLI (`gh`) authentication with read access to
+that repository. No token is stored in the plugin or its cache. The checked-in
+`scripts/nose-runtime.json` pins the version and every platform archive's SHA256;
+setup checks the archive, executable version, and cached executable integrity.
+Supported managed binaries cover macOS and Linux on ARM64 and x86_64.
+
+Validated cached runtimes work offline. When a new release cannot be downloaded,
+setup reports its fallback to a previous validated managed runtime or an existing
+`nose` on PATH. Checksum and executable-integrity failures are errors. An OFF
+project skips automatic installation and keeps its existing setting.
+
 Install the plugin, trust its hook, and open a **new Codex session in the Git
 project**. The SessionStart hook installs or updates a repository-local
 `hook.nose-review` pre-push registration. Its payload lives in the Git common
@@ -252,7 +265,9 @@ are recovered after 30 seconds; an active or unverifiable owner is never evicted
 
 ## Requirements and limits
 
-- Node.js 20+, Nose and Gitleaks on PATH (tested with Nose 0.21.0 and Gitleaks 8.29.1).
+- Node.js 20+, a managed Nose runtime or Nose on PATH, and Gitleaks on PATH
+  (tested with Nose 0.21.0 and Gitleaks 8.29.1). First managed installation also
+  requires authenticated GitHub CLI access to the private distribution and tar.
   Gitleaks is a prerequisite, not silently installed by SessionStart.
 - Git and tar for pre-push commit snapshots. No Git is required for manual folder scans.
 - Shared scans use Nose's native Rayon worker selection. Without

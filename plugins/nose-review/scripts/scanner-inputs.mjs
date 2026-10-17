@@ -1,9 +1,10 @@
 import {spawnSync} from 'node:child_process';
-import {accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync} from 'node:fs';
+import {existsSync, lstatSync, mkdirSync, readFileSync, realpathSync} from 'node:fs';
 import {delimiter, dirname, join, resolve} from 'node:path';
 import {homedir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {hash} from './source-evidence.mjs';
+import {resolveNose} from './nose-runtime.mjs';
 
 export const isGit=root=>existsSync(join(root,'.git'));
 export const shellQuote = text => "'" + text.replaceAll("'", "'\"'\"'") + "'";
@@ -52,7 +53,8 @@ export function scannerInputs(root, {cacheDirectory, cacheOwner, managed, exclus
   const env=scannerEnvironment(cacheOwner,Object.fromEntries(Object.entries(process.env).filter(([key])=>
     runtimeVariables.has(key) || /^(NOSE_|RAYON_|GIT_|XDG_|LC_|DYLD_|LD_)/.test(key))));
   const threads=env.RAYON_NUM_THREADS ?? 'native default';
-  const version=spawnSync('nose',['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
+  const executable=resolveNose({env,cwd:root});
+  const version=spawnSync(executable,['--version'],{cwd:root,env,encoding:'utf8',timeout:5000});
   if(version.status!==0) throw new Error('Nose executable unavailable');
   const cache=join(cacheDirectory,'analysis-cache');
   mkdirSync(cache,{recursive:true,mode:0o700});
@@ -64,9 +66,6 @@ export function scannerInputs(root, {cacheDirectory, cacheOwner, managed, exclus
     const skip=reason=>{onSkip?.(reason);return null;};
     if(!inputIdentity) return skip('no-content-identity');
     try {
-      const executable=(env.PATH ?? '').split(delimiter).map(directory=>resolve(root,directory,'nose'))
-        .find(path=>{try {accessSync(path,constants.X_OK);return lstatSync(realpathSync(path)).isFile();} catch {return false;}});
-      if(!executable) return skip('executable-unresolved');
       const config=spawnSync(executable,[...args,'--show-config'],{cwd:root,env,encoding:'utf8',timeout:5000,maxBuffer:1024*1024});
       if(config.status!==0) return skip('effective-config-unavailable');
       const settings=JSON.parse(config.stdout);
@@ -82,5 +81,5 @@ export function scannerInputs(root, {cacheDirectory, cacheOwner, managed, exclus
         environment:hash(JSON.stringify(Object.entries(env).sort(([a],[b])=>a.localeCompare(b))))};
     } catch {return skip('identity-unavailable');}
   };
-  return {env,args,cache,threads,noseVersion,identity};
+  return {env,args,cache,threads,noseVersion,identity,executable};
 }

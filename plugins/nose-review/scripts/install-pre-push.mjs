@@ -6,9 +6,10 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refTimeoutMs, shellQuote as quote } from './review-runtime.mjs';
 import { disabledSetting } from './project-settings.mjs';
+import { ensureNose } from './nose-runtime.mjs';
 
 const marker='# nose-review managed pre-push v1';
-export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','secret-review.mjs','failure-history.mjs'];
+export const payloadSources=['nose-pre-push.mjs','verified-archive.mjs','review-runtime.mjs','review-policy.mjs','source-evidence.mjs','scanner-inputs.mjs','commit-inputs.mjs','scan-result-cache.mjs','secret-scan.mjs','commit-secrets.mjs','secret-review.mjs','failure-history.mjs','nose-runtime.mjs','nose-runtime.json'];
 function hookContent(release,data) {
   const hashes=data.map(([name,text])=>[name,createHash('sha256').update(text).digest('hex')]);
   const bootstrap=`const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path'),url=require('node:url');
@@ -91,12 +92,20 @@ function registerHook(root,hook,legacy,worktrees) {
     else rmSync(old);
   }
 }
-export function install(cwd, source=dirname(fileURLToPath(import.meta.url))) {
+export function install(cwd, source=dirname(fileURLToPath(import.meta.url)), {setupRuntime}={}) {
   let root;
   try { root=git(cwd,['rev-parse','--show-toplevel']); }
-  catch { return {status:'skipped',reason:'No Git worktree; use nose-fix for manual checks'}; }
+  catch {
+    const runtime=setupRuntime?.({cwd});
+    if (runtime?.status==='external' || runtime?.status==='offline') process.stderr.write('Nose managed update unavailable; using '+runtime.binary+': '+runtime.reason+'\n');
+    return {status:'skipped',reason:'No Git worktree; use nose-fix for manual checks'};
+  }
   const disabledBy=disabledSetting(root);
   if(disabledBy) return {status:'off',root,disabledBy};
+  if (setupRuntime) {
+    const runtime=setupRuntime({cwd:root});
+    if (runtime.status==='external' || runtime.status==='offline') process.stderr.write('Nose managed update unavailable; using '+runtime.binary+': '+runtime.reason+'\n');
+  }
   if(!configuredHooksSupported(root)) throw new Error('Git with configured hooks is required (Git 2.54 or newer); use the same supported Git for installation and pushes');
   const common=git(root,['rev-parse','--path-format=absolute','--git-common-dir']);
   const hooks=join(common,'nose-review');
@@ -193,7 +202,7 @@ if(check.error || check.signal || !expected) {
 if(process.argv[1] && fileURLToPath(import.meta.url)===realpathSync(process.argv[1])) {
   try {
     const event=process.argv.length>2?null:JSON.parse(readFileSync(0,'utf8'));
-    const result=install(event?.cwd ?? process.argv[2]);
+    const result=install(event?.cwd ?? process.argv[2], undefined, {setupRuntime:ensureNose});
     if(event) {
       const output={};
       if(result.status==='installed' || result.status==='current') output.hookSpecificOutput={hookEventName:'SessionStart',additionalContext:'Nose pre-push is a blocking gate. If a user-authorized push fails with NOSE_DUPLICATION_BLOCKED, use the installed nose-fix skill to inspect and fix scoped findings or record justified intentional copies, run relevant tests, commit scoped source fixes, keep source-bound review decisions in the locally excluded .nose-review baseline, and retry the same authorized push. Maximum two recovery attempts. Never bypass hooks or blanket-accept findings. For NOSE_CHECK_UNAVAILABLE, repair the check or report its blocker; do not treat it as duplication or force a push. This instruction does not authorize unsolicited commits or pushes.'};

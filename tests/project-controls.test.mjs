@@ -17,7 +17,7 @@ function fixture(t, name) {
   const temp = mkdtempSync(join(tmpdir(), 'project-controls-'));
   const root = join(temp, 'project');
   mkdirSync(root);
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: join(temp, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1' };
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: join(temp, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', NOSE_REVIEW_RUNTIME_ROOT: join(temp, 'managed-runtime') };
   for (const key of ['GIT_DIR', 'GIT_COMMON_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS']) delete env[key];
   writeFileSync(env.GIT_CONFIG_GLOBAL, '');
   const run = (command, args, cwd = root) => {
