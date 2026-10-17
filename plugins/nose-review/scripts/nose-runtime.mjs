@@ -8,7 +8,8 @@ const digest = data => createHash('sha256').update(data).digest('hex');
 export const runtimeManifest = () => JSON.parse(readFileSync(new URL('./nose-runtime.json', import.meta.url), 'utf8'));
 const cacheRoot = env => env.NOSE_REVIEW_RUNTIME_ROOT ?? join(env.XDG_CACHE_HOME || join(env.HOME || homedir(), '.cache'), 'nose-review', 'runtime');
 const target = () => `${process.platform}-${process.arch}`;
-const pin = manifest => ({repository:manifest.repository,version:manifest.version,target:target(),archiveSha256:manifest.assets[target()]?.sha256});
+const receiptSchema = 2;
+const pin = manifest => ({schema:receiptSchema,repository:manifest.repository,version:manifest.version,target:target(),archiveSha256:manifest.assets[target()]?.sha256});
 const releasePath = (base, manifest) => join(base, `${manifest.version}-${target()}-${digest(JSON.stringify(pin(manifest))).slice(0,16)}`);
 function verified(directory, expected) {
   if (!lstatSync(directory, {throwIfNoEntry:false})) return null;
@@ -17,6 +18,9 @@ function verified(directory, expected) {
   if (expected && Object.entries(expected).some(([key,value])=>receipt[key]!==value)) throw new Error('Managed Nose receipt does not match its pinned release');
   if (!lstatSync(binary).isFile() || digest(readFileSync(binary)) !== receipt.binarySha256)
     throw new Error('Managed Nose integrity check failed');
+  const license=join(directory,'LICENSE');
+  if (!lstatSync(license,{throwIfNoEntry:false})?.isFile() || digest(readFileSync(license)) !== receipt.licenseSha256)
+    throw new Error('Managed Nose license integrity check failed');
   accessSync(binary, constants.X_OK);
   return binary;
 }
@@ -25,7 +29,10 @@ function previous(base, manifest) {
   for (const name of readdirSync(base).filter(name=>/^v\d+\.\d+\.\d+-/.test(name) && !name.endsWith('.lock')).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))) {
     const directory=join(base,name);
     const receipt=JSON.parse(readFileSync(join(directory,'receipt.json'),'utf8'));
-    if (receipt.repository===manifest.repository && receipt.target===target()
+    if (receipt.schema===receiptSchema && /^[a-f0-9]{64}$/.test(receipt.licenseSha256 ?? '')
+      && /^v\d+\.\d+\.\d+$/.test(receipt.version ?? '')
+      && receipt.version.localeCompare(manifest.version,undefined,{numeric:true})<=0
+      && receipt.repository===manifest.repository && receipt.target===target()
       && (receipt.version!==manifest.version || receipt.archiveSha256===manifest.assets[target()]?.sha256)) return verified(directory);
   }
   return null;
@@ -74,11 +81,14 @@ export function ensureNose({env=process.env, cwd=process.cwd(), manifest=runtime
     const member=asset.name.replace(/\.tar\.xz$/,'')+'/nose';
     const extracted=spawnSync('tar',['-xOf',archive,member],{timeout:30000,maxBuffer:256*1024*1024});
     if (extracted.error || extracted.status !== 0 || !extracted.stdout?.length) throw new Error('Nose archive does not contain the expected executable');
+    const license=spawnSync('tar',['-xOf',archive,asset.name.replace(/\.tar\.xz$/,'')+'/LICENSE'],{timeout:30000,maxBuffer:1024*1024});
+    if (license.error || license.status !== 0 || !license.stdout?.length) throw new Error('Nose archive does not contain the expected license');
+    writeFileSync(join(stage,'LICENSE'),license.stdout,{mode:0o644});
     const binary=join(stage,'nose');
     writeFileSync(binary,extracted.stdout,{mode:0o755});
     const version=spawnSync(binary,['--version'],{encoding:'utf8',timeout:10000});
     if (version.error || version.status !== 0 || version.stdout.trim() !== `nose ${manifest.version.slice(1)}`) throw new Error('Downloaded Nose version verification failed');
-    writeFileSync(join(stage,'receipt.json'),JSON.stringify({...pin(manifest),binarySha256:digest(extracted.stdout)})+'\n',{mode:0o600});
+    writeFileSync(join(stage,'receipt.json'),JSON.stringify({...pin(manifest),binarySha256:digest(extracted.stdout),licenseSha256:digest(license.stdout)})+'\n',{mode:0o600});
     rmSync(archive);
     renameSync(stage,destination);
     return {status:'installed',binary:join(destination,'nose'),version:manifest.version};

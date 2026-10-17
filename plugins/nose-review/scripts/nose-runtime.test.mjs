@@ -2,12 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {ensureNose, resolveNose} from './nose-runtime.mjs';
 import {install} from './install-pre-push.mjs';
 import {gitFixture, preserveEnvironment, testDirectory} from './test-helpers.mjs';
 
+const licenseText='MIT License\nCopyright fixture authors\nPermission is hereby granted for this test fixture.\n';
 function fixture(t) {
   const root=testDirectory(t,'nose-runtime-');
   const env={...process.env,NOSE_REVIEW_RUNTIME_ROOT:join(root,'cache'),PATH:''};
@@ -15,6 +16,7 @@ function fixture(t) {
     const stem='nose-cli-fixture', dir=join(root,version), folder=join(dir,stem);
     mkdirSync(folder,{recursive:true});
     writeFileSync(join(folder,'nose'),`#!/bin/sh\necho 'nose ${version.slice(1)}'\n`,{mode:0o755});
+    writeFileSync(join(folder,'LICENSE'),licenseText);
     const archive=join(dir,stem+'.tar.xz');
     execFileSync('tar',['-cJf',archive,'-C',dir,stem]);
     const manifest={version,repository:'fixture/nose',assets:{[`${process.platform}-${process.arch}`]:{name:stem+'.tar.xz',sha256:createHash('sha256').update(readFileSync(archive)).digest('hex')}}};
@@ -26,11 +28,38 @@ test('installs pinned executable and validates offline without downloading again
   const f=fixture(t),options=f.release('v0.21.0');
   const installed=ensureNose(options);
   assert.equal(installed.status,'installed');
+  assert.equal(readFileSync(join(dirname(installed.binary),'LICENSE'),'utf8'),licenseText);
   assert.equal(execFileSync(installed.binary,['--version'],{encoding:'utf8'}).trim(),'nose 0.21.0');
   assert.equal(resolveNose(options),installed.binary);
   assert.equal(ensureNose({...options,fetchArchive:()=>{throw Error('unexpected network');}}).status,'current');
   writeFileSync(installed.binary,'corrupted');
   assert.throws(()=>resolveNose(options),/integrity/);
+});
+test('license tampering is rejected by both setup and runtime resolution',t=>{
+  const options=fixture(t).release('v0.21.0'),installed=ensureNose(options);
+  writeFileSync(join(dirname(installed.binary),'LICENSE'),'tampered');
+  assert.throws(()=>resolveNose(options),/license integrity/);
+  assert.throws(()=>ensureNose(options),/license integrity/);
+});
+test('legacy receipt without a license is skipped and migrated by a fresh verified install',t=>{
+  const f=fixture(t),options=f.release('v0.21.0');
+  const oldPin={repository:options.manifest.repository,version:options.manifest.version,target:`${process.platform}-${process.arch}`,archiveSha256:options.manifest.assets[`${process.platform}-${process.arch}`].sha256};
+  const old=join(f.env.NOSE_REVIEW_RUNTIME_ROOT,`${oldPin.version}-${oldPin.target}-${createHash('sha256').update(JSON.stringify(oldPin)).digest('hex').slice(0,16)}`);
+  mkdirSync(old,{recursive:true});
+  const data=Buffer.from('#!/bin/sh\necho nose 0.21.0\n');
+  writeFileSync(join(old,'nose'),data,{mode:0o755});
+  writeFileSync(join(old,'receipt.json'),JSON.stringify({...oldPin,binarySha256:createHash('sha256').update(data).digest('hex')}));
+  assert.throws(()=>resolveNose(options),/unavailable/);
+  assert.throws(()=>ensureNose({...options,fetchArchive:()=>{throw Error('offline');}}),/offline/);
+  const installed=ensureNose(options);
+  assert.equal(installed.status,'installed'); assert.notEqual(dirname(installed.binary),old);
+  assert.equal(readFileSync(join(dirname(installed.binary),'LICENSE'),'utf8'),licenseText);
+  assert.equal(resolveNose(options),installed.binary);
+});
+test('an older pin never falls forward to a newer cached runtime',t=>{
+  const f=fixture(t),old=f.release('v0.21.0'); ensureNose(f.release('v0.22.0'));
+  assert.throws(()=>resolveNose(old),/unavailable/);
+  assert.throws(()=>ensureNose({...old,fetchArchive:()=>{throw Error('offline');}}),/offline/);
 });
 test('upgrades pin atomically; unavailable update retains verified previous managed binary',t=>{
   const f=fixture(t),old=f.release('v0.21.0'),next=f.release('v0.22.0');
