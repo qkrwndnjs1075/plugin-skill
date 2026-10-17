@@ -46,8 +46,9 @@ The scheduled job creates a reviewable PR and never merges it. Review source
 repository build evidence and run the full plugin regression suite before
 merging. Check out the PR's exact head (`gh pr checkout NUMBER`), then run the
 commands above except the updater, which would select a potentially newer release.
-GitHub does not trigger ordinary workflows for PR events created using
-`GITHUB_TOKEN`; run required validation manually when necessary.
+PR workflow runs created using `GITHUB_TOKEN` may require approval before running;
+approve the pending run or dispatch required validation manually. See
+[GitHub token event behavior](https://docs.github.com/en/actions/concepts/security/github_token).
 
 The private source distribution stores no plugin-user credentials. If upstream
 becomes unavailable, use the last verified release and its preserved source,
