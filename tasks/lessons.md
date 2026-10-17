@@ -1,5 +1,7 @@
 # Lessons
 
+- Keep repository visibility selection pending until the user answers before creating a remote repository; do not publish while an explicit visibility question remains unresolved.
+
 - Keep user-facing explanations in Korean when the user requests Korean; retain that preference across later progress updates and results.
 - Answer native Nose defaults from Nose/Rayon itself; distinguish the nose-review wrapper's explicit overrides instead of substituting its defaults.
 - Let native tools own worker selection and parsing unless the user asks for wrapper limits; pass explicit caller settings unchanged.
