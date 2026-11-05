@@ -17,18 +17,6 @@
       "category": "Productivity"
     },
     {
-      "name": "skill-maintenance",
-      "source": {
-        "source": "local",
-        "path": "./plugins/skill-maintenance"
-      },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
-      "category": "Productivity"
-    },
-    {
       "name": "joowon-plugin",
       "source": {
         "source": "local",

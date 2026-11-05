@@ -11,7 +11,7 @@ test('repository marketplace exposes isolated plugin packages',()=>{
   const marketplace=readJson(join(root,'.agents/plugins/marketplace.json'));
   assert.equal(marketplace.name,'plugin-skill');
   assert.equal(marketplace.interface.displayName,'Joowon Plugins');
-  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','skill-maintenance','joowon-plugin','file-checks']);
+  assert.deepEqual(marketplace.plugins.map(plugin=>plugin.name),['nose-review','joowon-plugin','file-checks']);
   for(const plugin of marketplace.plugins) {
     const directory=resolve(root,plugin.source.path);
     assert.ok(directory.startsWith(join(root,'plugins')+'/'));
@@ -31,16 +31,9 @@ test('Git Workflow preserves the local Commit and PR skill packages',()=>{
   assert.equal(existsSync(join(root,'plugins/joowon-plugin/skills/jw')),false);
 });
 
-test('Nose owns its hook while skill maintenance stays explicit-only',()=>{
+test('Nose keeps its hook after Skill Maintenance is retired',()=>{
   assert.ok(existsSync(join(root,'plugins/nose-review/hooks/hooks.json')));
-  assert.equal(existsSync(join(root,'plugins/skill-maintenance/hooks/hooks.json')),false);
-  for(const skill of ['skill-eraser','skill-updater']) {
-    const directory=join(root,'plugins/skill-maintenance/skills',skill);
-    assert.ok(existsSync(join(directory,'SKILL.md')));
-    const openai=readFileSync(join(directory,'agents/openai.yaml'),'utf8');
-    assert.match(openai,/allow_implicit_invocation: false/);
-    assert.match(openai,new RegExp('\\$'+skill));
-  }
-  assert.ok(existsSync(join(root,'plugins/skill-maintenance/scripts/judge.mjs')));
-  assert.ok(existsSync(join(root,'plugins/skill-maintenance/scripts/judgment.schema.json')));
+  assert.equal(existsSync(join(root,'plugins/skill-maintenance/.codex-plugin/plugin.json')),false);
+  assert.equal(existsSync(join(root,'plugins/skill-maintenance/skills/skill-eraser/SKILL.md')),false);
+  assert.equal(existsSync(join(root,'plugins/skill-maintenance/skills/skill-updater/SKILL.md')),false);
 });
