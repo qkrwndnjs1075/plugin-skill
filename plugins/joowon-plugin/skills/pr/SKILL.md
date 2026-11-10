@@ -47,6 +47,8 @@ If verification fails, fix task-owned defects when authorized and recheck the af
 
 ## Write for a first-time reviewer
 
+Before drafting, identify from the diff what prevented the requested behavior, where that restriction was enforced, and what this change now accepts or rejects. Put those decision-bearing facts in the opening, with a concrete input and observed result where useful. Name the responsible API or stage instead of saying only "the SDK blocks it." For changes to validation or permissions, explain how the permitted set is selected and which relevant unsafe inputs remain rejected; an allowlist claim alone does not establish that callers cannot allow reserved values. Do not invent a security section for unrelated changes or substitute test counts for these answers.
+
 Use the repository's template. Without one, use this structure, scaled to the change:
 
 - **Problem and outcome:** what triggered the work, previous behavior, and what the user can now do. Include a concrete before/after example.
@@ -57,10 +59,12 @@ Use the repository's template. Without one, use this structure, scaled to the ch
 
 Link owning issues when present and list dependent PRs when needed. Use a behavior-focused title. Explain the final delivered change, not the conversation, abandoned drafts, or a commit-by-commit diary. Update the title and body when scope changes.
 
+Read the opening as a reviewer who cannot open the diff or run tests: can they locate the existing limitation, understand the changed behavior and its relevant constraints, and distinguish evidence from unverified claims? If the answers are buried later, move them forward rather than append another checklist. When drafting a requested Slack or other handoff message, retain these same decision-bearing facts and the PR link; compress implementation detail before acceptance restrictions or verification limits. Drafting a message does not authorize sending it.
+
 ## Publish and confirm
 
 Complete the diff review, description and available evidence before submitting the PR. Use an authenticated connector or repository-supported Git host CLI. For multiline CLI bodies, write the exact Markdown to a temporary file and pass it using the CLI's body-file option, such as `gh pr create --body-file <file>`. Do not inline shell-sensitive text.
 
 Confirm the destination, base and head before pushing or creating. Reuse an existing matching PR instead of making a duplicate; do not overwrite unrelated description content. After a timed-out or ambiguous remote mutation, inspect the remote branch or PR state before retrying. If the result remains unknown, stop that mutation and report uncertainty rather than repeat blindly.
 
-Read back each created/updated PR. Confirm its URL, title, base/head, actual diff, description and attachments are present and usable by the intended reviewer. Report PR links with their feature scopes, verification results and visible limitations. If publishing is blocked, provide the completed local description and exact blocker, explicitly stating that a PR was not created.
+Read back each created/updated PR. Confirm its URL, title, base/head, actual diff, description and attachments are present and usable by the intended reviewer. Repeat the opening-only review on the published body, not just a presence check. Report PR links with their feature scopes, verification results and visible limitations. If publishing is blocked, provide the completed local description and exact blocker, explicitly stating that a PR was not created.
