@@ -45,6 +45,14 @@ For visual changes, read [visual evidence](references/visual-evidence.md) and ca
 
 If verification fails, fix task-owned defects when authorized and recheck the affected boundary. Do not bypass required checks, silently bundle unrelated repairs, or claim readiness. If a required check is blocked by missing environment/access, keep the result and limitation visible and follow the repository's rules on whether a Draft may still be created.
 
+## Reconcile affected documentation
+
+Before publication, compare documentation affected by the PR with the final code and verification evidence, including relevant README usage, setup instructions, module guides and evidence summaries even when they are absent from the initial diff. Correct stale scope, template placeholders, examples and status claims within the requested delivery; do not expand this into an unrelated repository-wide cleanup.
+
+Put prerequisites that prevent installation, startup or use before the affected commands. Distinguish implemented behavior from dependency-gated or unverified behavior. Label historical verification with its revision and environment instead of presenting it as current; preserve original recordings and historical results. Follow the owning generator for managed documentation rather than hand-editing generated assets.
+
+Check changed relative links and anchors, and reconcile the PR description with the maintained documentation. Reuse existing runtime evidence when only prose changed and the tested source remains unchanged; validate commands or behavior when the documentation exposes a real uncertainty. Include in-scope documentation corrections in the PR before publishing, not merely in a local follow-up.
+
 ## Write for a first-time reviewer
 
 Before drafting, identify from the diff what prevented the requested behavior, where that restriction was enforced, and what this change now accepts or rejects. Put those decision-bearing facts in the opening, with a concrete input and observed result where useful. Name the responsible API or stage instead of saying only "the SDK blocks it." For changes to validation or permissions, explain how the permitted set is selected and which relevant unsafe inputs remain rejected; an allowlist claim alone does not establish that callers cannot allow reserved values. Do not invent a security section for unrelated changes or substitute test counts for these answers.
