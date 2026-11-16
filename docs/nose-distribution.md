@@ -6,14 +6,15 @@ GitHub CLI read access for first installation. Existing validated caches remain
 usable without GitHub. A project's `hook.nose-review.enabled=false` setting
 remains OFF: session setup skips installation and scans for that project.
 
-The source repository proposes upstream release updates in pull requests. Its
-managed build workflow tests and packages the accepted source; publishing a new
-release is explicit. The first v0.21.0 distribution preserves upstream binaries
+The source repository checks for upstream releases and runs its managed build
+workflow before publishing. All four native targets must pass workspace tests
+and real clean/duplicate CLI checks before a release is published. The first
+v0.21.0 distribution preserves upstream binaries
 byte for byte with upstream checksums, source archive, and an additional locked
 Cargo dependency archive. Subsequent managed releases build from preserved source.
 The [source maintenance guide](https://github.com/qkrwndnjs1075/nose/blob/managed/.managed/README.md)
-describes the `Managed build` workflow: dispatch it on `managed` with the
-accepted upstream tag in `release_tag` to test and publish. Its Actions run stores
+describes the automatic pipeline and the `Managed build` manual recovery path.
+Its Actions run stores
 per-platform smoke results and build logs; release notes identify the build commit.
 
 The plugin consumes only the release pinned in
@@ -34,21 +35,30 @@ node scripts/smoke-nose-runtime.mjs
 node --test plugins/nose-review/scripts/*.test.mjs
 ```
 
-For scheduled update PRs, set the `plugin-skill` Actions secret
+For scheduled plugin releases, set the `plugin-skill` Actions secret
 `NOSE_RELEASE_TOKEN` to a fine-grained token with **Contents: read** permission
 on `qkrwndnjs1075/nose` only. Do not commit a token. The workflow uses that token
-only to read the release; its own `GITHUB_TOKEN` writes the update branch and PR.
-Enable Actions' permission to create pull requests in repository settings.
+only to read the release; its own `GITHUB_TOKEN` publishes the verified manifest
+commit and plugin release. This repository does not need source workflow-write
+permission. The source distribution's separate `NOSE_UPDATE_TOKEN` preserves
+original upstream tags, whose history can contain workflow files.
 Without the secret, the workflow reports the missing configuration and makes
 no update. Manual local updates remain available.
 
-The scheduled job creates a reviewable PR and never merges it. Review source
-repository build evidence and run the full plugin regression suite before
-merging. Check out the PR's exact head (`gh pr checkout NUMBER`), then run the
-commands above except the updater, which would select a potentially newer release.
-PR workflow runs created using `GITHUB_TOKEN` may require approval before running;
-approve the pending run or dispatch required validation manually. See
-[GitHub token event behavior](https://docs.github.com/en/actions/concepts/security/github_token).
+The hourly job verifies every platform archive's checksum, installs and exercises
+the pinned Linux runtime with clean/duplicate input, and runs the complete Nose
+Review regression suite. Only then does it advance the manifest and plugin patch
+version on `main` and publish `nose-review-vVERSION` with a plugin archive and
+checksum. It refuses a concurrent non-fast-forward push. Releases are assembled
+as drafts and published only after their uploaded bytes match a deterministic
+archive of the recorded plugin source commit. A retry finds the same plugin
+source even after unrelated main commits and uploads only missing matching
+assets; complete releases stay unchanged. Incorrect provenance or modified
+existing assets stop publication instead of being overwritten.
+
+Publishing does not update any computer's installed plugin or project gates.
+Installation remains manual. For a local marketplace checkout, fetch the new
+`main` first, then reinstall `nose-review@plugin-skill` through Codex when ready.
 
 The private source distribution stores no plugin-user credentials. If upstream
 becomes unavailable, use the last verified release and its preserved source,

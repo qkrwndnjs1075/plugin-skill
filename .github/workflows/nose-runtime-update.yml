@@ -1,17 +1,17 @@
-name: Propose verified Nose runtime update
+name: Release verified Nose Review runtime
 on:
   schedule:
-    - cron: '37 8 * * *'
+    - cron: '37 * * * *'
   workflow_dispatch:
 permissions:
   contents: write
-  pull-requests: write
 concurrency:
   group: nose-runtime-update
   cancel-in-progress: false
 jobs:
-  propose:
+  release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Require private distribution access
         env:
@@ -22,36 +22,46 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: node --test scripts/update-nose-runtime.test.mjs
+      - run: node --test scripts/update-nose-runtime.test.mjs scripts/publish-nose-plugin.test.mjs
       - run: node scripts/update-nose-runtime.mjs
         env:
           GH_TOKEN: ${{ secrets.NOSE_RELEASE_TOKEN }}
+      - name: Select pending plugin release
+        id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node scripts/publish-nose-plugin.mjs pending
       - name: Verify downloaded runtime
+        if: steps.pending.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.NOSE_RELEASE_TOKEN }}
         run: |
           node scripts/smoke-nose-runtime.mjs
-          node --test plugins/nose-review/scripts/nose-runtime.test.mjs
-      - name: Propose pin update
+      - name: Run Nose Review regressions
+        if: steps.pending.outputs.release == 'true'
+        run: node --test plugins/nose-review/scripts/*.test.mjs
+      - name: Publish verified plugin
+        if: steps.pending.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if git diff --quiet; then exit 0; fi
-          version=$(node -p 'JSON.parse(require("fs").readFileSync("plugins/nose-review/scripts/nose-runtime.json")).version')
-          branch="automation/nose-runtime-${version}"
-          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            echo "Update branch already exists; keeping review intact."
-          else
-            git switch -c "$branch"
+          runtime=$(node -p 'JSON.parse(require("fs").readFileSync("plugins/nose-review/scripts/nose-runtime.json")).version')
+          if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add plugins/nose-review/scripts/nose-runtime.json plugins/nose-review/.codex-plugin/plugin.json
-            git commit -m "chore(nose-review): propose runtime ${version}"
-            git push origin "$branch"
+            git diff --exit-code
+            git commit -m "chore(nose-review): release runtime ${runtime}"
+            gh auth setup-git
+            git push origin HEAD:main
           fi
-          if [ "$(gh pr list --head "$branch" --state all --json number --jq length)" = 0 ]; then
-            gh pr create --base main --head "$branch" --title "Update Nose runtime to ${version}" --body 'Updates the pinned runtime from our independent distribution. All platform archives match their release checksums; the Linux runtime installation and clean/duplicate CLI smoke tests passed. Review integration compatibility before merging. No automatic merge.'
-          fi
+          node scripts/publish-nose-plugin.mjs publish
