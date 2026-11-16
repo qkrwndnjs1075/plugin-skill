@@ -55,6 +55,8 @@ archive of the recorded plugin source commit. A retry finds the same plugin
 source even after unrelated main commits and uploads only missing matching
 assets; complete releases stay unchanged. Incorrect provenance or modified
 existing assets stop publication instead of being overwritten.
+The regression job prepares a checksum-verified Gitleaks binary and adds the
+already verified managed Nose binary to the runner's PATH before running tests.
 
 Publishing does not update any computer's installed plugin or project gates.
 Installation remains manual. For a local marketplace checkout, fetch the new
