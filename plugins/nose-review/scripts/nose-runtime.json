@@ -1,10 +1,22 @@
 {
-  "version": "v0.21.0",
+  "version": "v0.22.0",
   "repository": "qkrwndnjs1075/nose",
   "assets": {
-    "darwin-arm64": {"name":"nose-cli-aarch64-apple-darwin.tar.xz","sha256":"f59993ed5157fbb757d992f10b601c966ab004dd52348a6e492310c21cafd891"},
-    "darwin-x64": {"name":"nose-cli-x86_64-apple-darwin.tar.xz","sha256":"e5cb88d02ef22387d6b7e97e0dd48fadc094ba92f653d5712c4d99c624afd718"},
-    "linux-arm64": {"name":"nose-cli-aarch64-unknown-linux-gnu.tar.xz","sha256":"fbda5adc746c9d0e6a3516236892e467227367ccad528fb3af1e3a87713e88e0"},
-    "linux-x64": {"name":"nose-cli-x86_64-unknown-linux-gnu.tar.xz","sha256":"49055374c37c4216d55f32ab389ed80f6cbdcf3f07f157d59880f9b005e6f5e6"}
+    "darwin-arm64": {
+      "name": "nose-cli-aarch64-apple-darwin.tar.xz",
+      "sha256": "c19152aa2dbcaf2b9f1687f6f7b99ab3e092d4d1a41155b26104df0274db50fd"
+    },
+    "darwin-x64": {
+      "name": "nose-cli-x86_64-apple-darwin.tar.xz",
+      "sha256": "380962168acf1b9e50a08bba326f9f3dc891a3ae9657479b5b21081826cfdf48"
+    },
+    "linux-arm64": {
+      "name": "nose-cli-aarch64-unknown-linux-gnu.tar.xz",
+      "sha256": "2a1a87ae829f486f8054a7dc5dd88e1ca199a9f6b120c21a897583a3647fc1ea"
+    },
+    "linux-x64": {
+      "name": "nose-cli-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "174d28778423f9366201feeb17e461d81cc69888752b4100e8744380c04a50db"
+    }
   }
 }
