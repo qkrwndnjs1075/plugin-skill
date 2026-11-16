@@ -23,7 +23,20 @@ async function inspect() {
     headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' },
   });
   if (response.status !== 404 && !response.ok) throw new Error(`Release lookup failed: HTTP ${response.status}`);
-  const release = response.status === 404 ? null : await response.json();
+  let release = response.status === 404 ? null : await response.json();
+  if (response.status === 404) {
+    for (let page = 1; ; page++) {
+      const listed = await fetch(`${process.env.GITHUB_API_URL ?? 'https://api.github.com'}/repos/${repository}/releases?per_page=100&page=${page}`, {
+        signal: AbortSignal.timeout(30_000),
+        headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json' },
+      });
+      if (!listed.ok) throw new Error(`Release listing failed: HTTP ${listed.status}`);
+      const releases = await listed.json();
+      if (!Array.isArray(releases)) throw new Error('Invalid release listing');
+      release = releases.find(entry => entry.tag_name === tag) ?? null;
+      if (release || releases.length < 100) break;
+    }
+  }
   const tagged = spawnSync('git', ['rev-parse', '--verify', `refs/tags/${tag}^{commit}`], { encoding: 'utf8' });
   const recordedSource = release?.body?.match(/^Plugin source: ([0-9a-f]{40})$/m)?.[1];
   if (release && (!recordedSource || release.prerelease)) throw new Error('Unrelated release; refusing to overwrite');

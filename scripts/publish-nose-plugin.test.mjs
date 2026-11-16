@@ -34,7 +34,7 @@ if (args[0] === 'api') {
  process.stdout.write(fs.readFileSync(path.join(process.env.FIXTURE_ROOT, 'asset-' + id)));
 } else if (args[1] === 'create') {
  if (fs.existsSync(file)) process.exit(1);
- save({body:args[args.indexOf('--notes')+1],target_commitish:args[args.indexOf('--target')+1],draft:true,assets:[]});
+ save({tag_name:args[2],body:args[args.indexOf('--notes')+1],target_commitish:args[args.indexOf('--target')+1],draft:true,assets:[]});
 } else if (args[1] === 'upload') {
  const release=JSON.parse(fs.readFileSync(file));
  for(const input of args.slice(3)) {
@@ -52,8 +52,15 @@ if (args[0] === 'api') {
 `, { mode: 0o755 });
   const server = createServer((request, response) => {
     const file = join(root, 'release.json');
-    response.writeHead(existsSync(join(root, 'deny')) ? 403 : existsSync(file) ? 200 : 404, { 'Content-Type': 'application/json' });
-    response.end(existsSync(file) ? readFileSync(file) : '{}');
+    const url = new URL(request.url, 'http://fixture');
+    const release = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+    const listing = url.pathname === '/repos/fixture/plugins/releases';
+    const visible = release && (listing || !release.draft);
+    response.writeHead(existsSync(join(root, 'deny')) ? 403 : listing || visible ? 200 : 404, { 'Content-Type': 'application/json' });
+    // Real GitHub hides drafts from tag lookup; authenticated listing exposes them.
+    const page = Number(url.searchParams.get('page') ?? 1);
+    const previous = Array.from({ length: 100 }, (_, index) => ({ tag_name: `other-${index}`, draft: true }));
+    response.end(JSON.stringify(listing ? (page === 1 ? previous : page === 2 && release ? [release] : []) : visible ? release : {}));
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => server.close());
