@@ -45,7 +45,7 @@ original upstream tags, whose history can contain workflow files.
 Without the secret, the workflow reports the missing configuration and makes
 no update. Manual local updates remain available.
 
-The daily job (09:37 UTC / 18:37 Asia/Seoul) verifies every platform archive's checksum, installs and exercises
+The weekly job (Monday 09:37 UTC / 18:37 Asia/Seoul) verifies every platform archive's checksum, installs and exercises
 the pinned Linux runtime with clean/duplicate input, and runs the complete Nose
 Review regression suite. Only then does it advance the manifest and plugin patch
 version on `main` and publish `nose-review-vVERSION` with a plugin archive and
