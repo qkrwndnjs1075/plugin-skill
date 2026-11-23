@@ -1,22 +1,22 @@
 {
-  "version": "v0.22.0",
+  "version": "v0.22.1",
   "repository": "qkrwndnjs1075/nose",
   "assets": {
     "darwin-arm64": {
       "name": "nose-cli-aarch64-apple-darwin.tar.xz",
-      "sha256": "c19152aa2dbcaf2b9f1687f6f7b99ab3e092d4d1a41155b26104df0274db50fd"
+      "sha256": "29dc7556abc8bd03d6d47d9d6bcd9be88e84344c7a020628a9d0450ac4a7a364"
     },
     "darwin-x64": {
       "name": "nose-cli-x86_64-apple-darwin.tar.xz",
-      "sha256": "380962168acf1b9e50a08bba326f9f3dc891a3ae9657479b5b21081826cfdf48"
+      "sha256": "8140c1bdc769f84fd1213da760160f79a5ba46a90088b8f3cffff77c4ac4f03b"
     },
     "linux-arm64": {
       "name": "nose-cli-aarch64-unknown-linux-gnu.tar.xz",
-      "sha256": "2a1a87ae829f486f8054a7dc5dd88e1ca199a9f6b120c21a897583a3647fc1ea"
+      "sha256": "fc21a58b3896289fdec9114f50dd958f06438f490629bbb9d737c8b3b67cb1f4"
     },
     "linux-x64": {
       "name": "nose-cli-x86_64-unknown-linux-gnu.tar.xz",
-      "sha256": "174d28778423f9366201feeb17e461d81cc69888752b4100e8744380c04a50db"
+      "sha256": "b012aa2124b9549c921b9969920c6955325943346bbe1b4d223af7b1db1b3c8b"
     }
   }
 }
